@@ -5,6 +5,7 @@
 package runtime_test
 
 import (
+	"fmt"
 	"runtime"
 	"strconv"
 	"strings"
@@ -24,6 +25,13 @@ func BenchmarkCompareStringEqual(b *testing.B) {
 			b.Fatal("s1 != s2")
 		}
 	}
+}
+
+func TestString(t *testing.T) {
+
+}
+func TestString1(t *testing.T) {
+	fmt.Println("-======-")
 }
 
 func BenchmarkCompareStringIdentical(b *testing.B) {

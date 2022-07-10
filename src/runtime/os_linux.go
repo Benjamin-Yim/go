@@ -161,6 +161,7 @@ const (
 func clone(flags int32, stk, mp, gp, fn unsafe.Pointer) int32
 
 // May run with m.p==nil, so write barriers are not allowed.
+// clone 一个内核线程关联到当前 M 数据结构
 //
 //go:nowritebarrier
 func newosproc(mp *m) {
@@ -326,9 +327,10 @@ func getHugePageSize() uintptr {
 	return uintptr(v)
 }
 
+// 系统初始化
 func osinit() {
-	ncpu = getproccount()
-	physHugePageSize = getHugePageSize()
+	ncpu = getproccount()                // 获取 CPU 数量
+	physHugePageSize = getHugePageSize() // 获取物理页大小
 	if iscgo {
 		// #42494 glibc and musl reserve some signals for
 		// internal use and require they not be blocked by

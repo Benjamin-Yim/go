@@ -532,7 +532,7 @@ var (
 
 func allgadd(gp *g) {
 	if readgstatus(gp) == _Gidle {
-		throw("allgadd: bad status Gidle")
+		throw("allgadd: bad status Gidle") // 未被初始化的状态，就抛异常
 	}
 
 	lock(&allglock)
@@ -654,6 +654,7 @@ func cpuinit() {
 //	make & queue new G
 //	call runtime·mstart
 //
+// 调度系统初始化
 // The new G calls runtime·main.
 func schedinit() {
 	lockInit(&sched.lock, lockRankSched)
@@ -1751,7 +1752,7 @@ func allocm(_p_ *p, fn func(), id int64) *m {
 	mp := new(m)
 	mp.mstartfn = fn
 	mcommoninit(mp, id)
-
+	// 分配 g0
 	// In case of cgo or Solaris or illumos or Darwin, pthread_create will make us a stack.
 	// Windows and Plan 9 will layout sched stack on OS stack.
 	if iscgo || mStackIsSystemAllocated() {
@@ -2083,6 +2084,7 @@ var newmHandoff struct {
 // May run with m.p==nil, so write barriers are not allowed.
 //
 // id is optional pre-allocated m ID. Omit by passing -1.
+// 创建一个新的m。它将以调用fn开始，否则就是调用调度器。
 //
 //go:nowritebarrierrec
 func newm(fn func(), _p_ *p, id int64) {
@@ -2256,6 +2258,7 @@ func mspinning() {
 // comment on acquirem below.
 //
 // Must not have write barriers because this may be called without a P.
+// 调度一个 M 去运行 p 也可能创建一个M去运行
 //
 //go:nowritebarrierrec
 func startm(_p_ *p, spinning bool) {
@@ -2275,10 +2278,10 @@ func startm(_p_ *p, spinning bool) {
 	// context, otherwise such preemption could occur on function entry to
 	// startm. Callers passing a nil P may be preemptible, so we must
 	// disable preemption before acquiring a P from pidleget below.
-	mp := acquirem()
-	lock(&sched.lock)
-	if _p_ == nil {
-		_p_, _ = pidleget(0)
+	mp := acquirem()  // 获取 m
+	lock(&sched.lock) // 禁止被其他 p 抢占
+	if _p_ == nil {   // 是空的
+		_p_, _ = pidleget(0) // 获取一个空闲的P
 		if _p_ == nil {
 			unlock(&sched.lock)
 			if spinning {
@@ -2333,7 +2336,7 @@ func startm(_p_ *p, spinning bool) {
 	// The caller incremented nmspinning, so set m.spinning in the new M.
 	nmp.spinning = spinning
 	nmp.nextp.set(_p_)
-	notewakeup(&nmp.park)
+	notewakeup(&nmp.park) //唤醒 m 线程去运行 g
 	// Ownership transfer of _p_ committed by wakeup. Preemption is now
 	// safe.
 	releasem(mp)
@@ -2409,6 +2412,7 @@ func handoffp(_p_ *p) {
 	}
 }
 
+// 尝试添加一个或者多个 P 去运行 G
 // Tries to add one more P to execute G's.
 // Called when a G is made runnable (newproc, ready).
 func wakep() {
@@ -2419,7 +2423,7 @@ func wakep() {
 	if atomic.Load(&sched.nmspinning) != 0 || !atomic.Cas(&sched.nmspinning, 0, 1) {
 		return
 	}
-	startm(nil, true)
+	startm(nil, true) // 如果当前有空闲的P, 但是无自旋的M(nmspinning等于0), 并且主函数已执行则唤醒或新建一个M
 }
 
 // Stops execution of the current m that is locked to a g until the g is runnable again.
@@ -4080,46 +4084,54 @@ func malg(stacksize int32) *g {
 	return newg
 }
 
+// fn是指向函数机器代码的指针
 // Create a new g running fn.
 // Put it on the queue of g's waiting to run.
 // The compiler turns a go statement into a call to this.
 func newproc(fn *funcval) {
-	gp := getg()
-	pc := getcallerpc()
-	systemstack(func() {
-		newg := newproc1(fn, gp, pc)
+	gp := getg()         // 获取当前待运行的G
+	pc := getcallerpc()  // 获取调用端的地址(返回地址)PC
+	systemstack(func() { // 切换当前的g到g0,并且使用g0的栈空间, 然后调用传入的函数
+		newg := newproc1(fn, gp, pc) // g0 开始调度
 
 		_p_ := getg().m.p.ptr()
-		runqput(_p_, newg, true)
+		runqput(_p_, newg, true) // 非公平抢占运行
 
 		if mainStarted {
-			wakep()
+			wakep() // 尝试去运行 g
 		}
-	})
+	}) // 切换回 G 之后就会运行 mstart
 }
 
 // Create a new g in state _Grunnable, starting at fn. callerpc is the
 // address of the go statement that created this. The caller is responsible
 // for adding the new g to the scheduler.
+// 创建一个状态为 _Grunnable（待运行）的 g,并且开始运行 fn 方法
+// fn 待运行的G 将要运行的方法
+// callergp 待运行的G
+// callerpc 待运行的G将要运行的方法的返回地址
 func newproc1(fn *funcval, callergp *g, callerpc uintptr) *g {
-	_g_ := getg()
+	_g_ := getg() // 获取当前 G
 
 	if fn == nil {
 		fatal("go of nil func value")
 	}
+	// 抢占 m，并禁止抢占
 	acquirem() // disable preemption because it can be holding p in a local var
-
+	// 获取当前 P ，M 对应 P
 	_p_ := _g_.m.p.ptr()
-	newg := gfget(_p_)
+	newg := gfget(_p_) // 获取空闲的 g，如果之前有g被回收在这里就可以复用
 	if newg == nil {
-		newg = malg(_StackMin)
-		casgstatus(newg, _Gidle, _Gdead)
+		newg = malg(_StackMin)           // 如果没有空闲的 g,新建一个
+		casgstatus(newg, _Gidle, _Gdead) // 已经被初始化了，就设为未被使用的状态
+		// 添加到全局g 列表
 		allgadd(newg) // publishes with a g->status of Gdead so GC scanner doesn't look at uninitialized stack.
 	}
+	// 判断分配的 g 栈是否存在
 	if newg.stack.hi == 0 {
 		throw("newproc1: newg missing stack")
 	}
-
+	// 判断当前是否是未被使用的状态
 	if readgstatus(newg) != _Gdead {
 		throw("newproc1: new g is not Gdead")
 	}
@@ -4136,13 +4148,20 @@ func newproc1(fn *funcval, callergp *g, callerpc uintptr) *g {
 	}
 
 	memclrNoHeapPointers(unsafe.Pointer(&newg.sched), unsafe.Sizeof(newg.sched))
+	// 设置sched.sp等于参数+返回地址后的rsp地址
 	newg.sched.sp = sp
 	newg.stktopsp = sp
+	// 设置sched.pc等于目标函数的地址
 	newg.sched.pc = abi.FuncPCABI0(goexit) + sys.PCQuantum // +PCQuantum so that previous instruction is in same function
+	// 设置sched.g等于g
 	newg.sched.g = guintptr(unsafe.Pointer(newg))
+	// 修改栈的位置，修改 g 的 pc 为 fn 的开始地址
+	// 防止被中断的意思？
 	gostartcallfn(&newg.sched, fn)
+	// 当前 g 运行结束的返回地址
 	newg.gopc = callerpc
 	newg.ancestors = saveAncestors(callergp)
+	// 指向 goroutine 将要运行的方法
 	newg.startpc = fn.fn
 	if isSystemGoroutine(newg, false) {
 		atomic.Xadd(&sched.ngsys, +1)
@@ -4165,6 +4184,7 @@ func newproc1(fn *funcval, callergp *g, callerpc uintptr) *g {
 	if newg.trackingSeq%gTrackingPeriod == 0 {
 		newg.tracking = true
 	}
+	// 设置g的状态为待运行(_Grunnable)
 	casgstatus(newg, _Gdead, _Grunnable)
 	gcController.addScannableStack(_p_, int64(newg.stack.hi-newg.stack.lo))
 
@@ -4189,6 +4209,7 @@ func newproc1(fn *funcval, callergp *g, callerpc uintptr) *g {
 	if trace.enabled {
 		traceGoCreate(newg, newg.startpc)
 	}
+	// 释放 m
 	releasem(_g_.m)
 
 	return newg
@@ -5540,6 +5561,8 @@ func mput(mp *m) {
 // sched.lock must be held.
 // May run during STW, so write barriers are not allowed.
 //
+//	尝试获取空闲的 M
+//
 //go:nowritebarrierrec
 func mget() *m {
 	assertLockHeld(&sched.lock)
@@ -5774,11 +5797,13 @@ const randomizeScheduler = raceenabled
 // If next is true, runqput puts g in the _p_.runnext slot.
 // If the run queue is full, runnext puts g on the global queue.
 // Executed only by the owner P.
+// 尝试将 g  放入本地待运行队列
+// 如果队列满了就放入全局队列
 func runqput(_p_ *p, gp *g, next bool) {
 	if randomizeScheduler && next && fastrandn(2) == 0 {
 		next = false
 	}
-
+	// 抢占 g 的意思，非公平竞争资源
 	if next {
 	retryNext:
 		oldnext := _p_.runnext
@@ -5789,6 +5814,7 @@ func runqput(_p_ *p, gp *g, next bool) {
 			return
 		}
 		// Kick the old runnext out to the regular run queue.
+		// 将旧的下一个待运行的g到移动到队尾。
 		gp = oldnext.ptr()
 	}
 
@@ -5800,6 +5826,8 @@ retry:
 		atomic.StoreRel(&_p_.runqtail, t+1) // store-release, makes the item available for consumption
 		return
 	}
+	// 将本地一批的 g 放入到全局队列
+	// 会把本地运行队列中一半的g
 	if runqputslow(_p_, gp, h, t) {
 		return
 	}

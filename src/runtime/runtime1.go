@@ -63,6 +63,7 @@ func argv_index(argv **byte, i int32) *byte {
 	return *(**byte)(add(unsafe.Pointer(argv), uintptr(i)*goarch.PtrSize))
 }
 
+// 处理入参
 func args(c int32, v **byte) {
 	argc = c
 	argv = v

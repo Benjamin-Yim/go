@@ -204,7 +204,7 @@ func stackpoolalloc(order uint8) gclinkptr {
 	lockWithRankMayAcquire(&mheap_.lock, lockRankMheap)
 	if s == nil {
 		// no free stacks. Allocate another span worth.
-		s = mheap_.allocManual(_StackCacheSize>>_PageShift, spanAllocStack)
+		s = mheap_.allocManual(_StackCacheSize>>_PageShift, spanAllocStack) // 栈池空就从 span 下增长
 		if s == nil {
 			throw("out of memory")
 		}
@@ -355,10 +355,10 @@ func stackalloc(n uint32) stack {
 	if stackDebug >= 1 {
 		print("stackalloc ", n, "\n")
 	}
-
+	// 如果在 Debug 状态
 	if debug.efence != 0 || stackFromSystem != 0 {
 		n = uint32(alignUp(uintptr(n), physPageSize))
-		v := sysAlloc(uintptr(n), &memstats.stacks_sys)
+		v := sysAlloc(uintptr(n), &memstats.stacks_sys) // 分配内存，所谓的栈内存,每次分配 4090，
 		if v == nil {
 			throw("out of memory (stackalloc)")
 		}
@@ -368,7 +368,7 @@ func stackalloc(n uint32) stack {
 	// Small stacks are allocated with a fixed-size free-list allocator.
 	// If we need a stack of a bigger size, we fall back on allocating
 	// a dedicated span.
-	var v unsafe.Pointer
+	var v unsafe.Pointer // 小的栈空间，按照标准的空闲列表来分配，如果需要大的栈空间需要使用 span 来分配
 	if n < _FixedStack<<_NumStackOrders && n < _StackCacheSize {
 		order := uint8(0)
 		n2 := n
@@ -376,19 +376,20 @@ func stackalloc(n uint32) stack {
 			order++
 			n2 >>= 1
 		}
-		var x gclinkptr
+		var x gclinkptr // 两者有什么区别？？？？
 		if stackNoCache != 0 || thisg.m.p == 0 || thisg.m.preemptoff != "" {
 			// thisg.m.p == 0 can happen in the guts of exitsyscall
 			// or procresize. Just get a stack from the global pool.
 			// Also don't touch stackcache during gc
 			// as it's flushed concurrently.
+			// 可能发生在系统调用退出的情况下需要栈空间，那么只需要从全局栈池获取就可以了
 			lock(&stackpool[order].item.mu)
-			x = stackpoolalloc(order)
+			x = stackpoolalloc(order) // 从栈池中分配一个栈
 			unlock(&stackpool[order].item.mu)
 		} else {
 			c := thisg.m.p.ptr().mcache
-			x = c.stackcache[order].list
-			if x.ptr() == nil {
+			x = c.stackcache[order].list // 从栈空闲列表中分配栈空间
+			if x.ptr() == nil {          // 没有就从缓存池中，填充一个
 				stackcacherefill(c, order)
 				x = c.stackcache[order].list
 			}
@@ -397,7 +398,7 @@ func stackalloc(n uint32) stack {
 		}
 		v = unsafe.Pointer(x)
 	} else {
-		var s *mspan
+		var s *mspan // 需要更大的栈空间，在span 上分配
 		npage := uintptr(n) >> _PageShift
 		log2npage := stacklog2(npage)
 

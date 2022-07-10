@@ -264,12 +264,12 @@ needtls:
 ok:
 	// set the per-goroutine and per-mach "registers"
 	get_tls(BX)
-	LEAQ	runtime·g0(SB), CX
+	LEAQ	runtime·g0(SB), CX // 将当前的栈和资源保存在g0
 	MOVQ	CX, g(BX)
-	LEAQ	runtime·m0(SB), AX
+	LEAQ	runtime·m0(SB), AX // 将该线程保存在m0
 
 	// save m->g0 = g0
-	MOVQ	CX, m_g0(AX)
+	MOVQ	CX, m_g0(AX) // m0和g0互相绑定
 	// save m0 to g0->m
 	MOVQ	AX, g_m(CX)
 
@@ -340,17 +340,19 @@ ok:
 	MOVL	AX, 0(SP)
 	MOVQ	32(SP), AX		// copy argv
 	MOVQ	AX, 8(SP)
-	CALL	runtime·args(SB)
-	CALL	runtime·osinit(SB)
-	CALL	runtime·schedinit(SB)
+	CALL	runtime·args(SB) // 处理args
+	CALL	runtime·osinit(SB) // os初始化， os_linux.go
+	CALL	runtime·schedinit(SB) // 调度系统初始化, proc.go
 
 	// create a new goroutine to start program
+	// 创建一个goroutine，然后开启执行程序
 	MOVQ	$runtime·mainPC(SB), AX		// entry
 	PUSHQ	AX
 	CALL	runtime·newproc(SB)
 	POPQ	AX
 
 	// start this M
+	// 启动线程，并且启动调度系统
 	CALL	runtime·mstart(SB)
 
 	CALL	runtime·abort(SB)	// mstart should never return
