@@ -342,15 +342,17 @@ type uncommontype struct {
 	_       uint32 // unused
 }
 
+// 接口的方法声明,一种函数声明的抽象
+// 比如：func Print() error
 type imethod struct {
-	name nameOff
-	ityp typeOff
+	name nameOff // 方法名
+	ityp typeOff // 描述方法参数返回值等细节
 }
 
 type interfacetype struct {
 	typ     _type
 	pkgpath name
-	mhdr    []imethod
+	mhdr    []imethod // 接口方法声明列表，按字典序排序
 }
 
 type maptype struct {
