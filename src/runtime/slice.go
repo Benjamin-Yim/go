@@ -13,9 +13,9 @@ import (
 )
 
 type slice struct {
-	array unsafe.Pointer
-	len   int
-	cap   int
+	array unsafe.Pointer // 底层数组的地址
+	len   int            // slice 的长度
+	cap   int            // slice 的容量
 }
 
 // A notInHeapSlice is a slice backed by go:notinheap memory.
@@ -99,7 +99,7 @@ func makeslice(et *_type, len, cap int) unsafe.Pointer {
 		}
 		panicmakeslicecap()
 	}
-
+	// 分配一段内存，mem:内存大小，et:内存内类，true:需要清零
 	return mallocgc(mem, et, true)
 }
 

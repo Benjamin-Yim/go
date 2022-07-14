@@ -1463,12 +1463,13 @@ func (l *linearAlloc) alloc(size, align uintptr, sysStat *sysMemStat) unsafe.Poi
 
 // notInHeap is off-heap memory allocated by a lower-level allocator
 // like sysAlloc or persistentAlloc.
-//
+// notInHeap 是由较低级别的分配器（如 sysAlloc 或 persistentAlloc）分配的堆外内存。
 // In general, it's better to use real types marked as go:notinheap,
 // but this serves as a generic type for situations where that isn't
 // possible (like in the allocators).
-//
+// 一般来说，最好使用标记为 go:notinheap 的真实类型，但这在不可能的情况下用作泛型类型（例如在分配器中）。
 // TODO: Use this as the return type of sysAlloc, persistentAlloc, etc?
+// TODO: 将其用作 sysAlloc、persistentAlloc 等的返回类型？
 //
 //go:notinheap
 type notInHeap struct{}
