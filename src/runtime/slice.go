@@ -210,7 +210,6 @@ func growslice(et *_type, old slice, cap int) slice {
 		// We assume that append doesn't need to preserve old.array in this case.
 		return slice{unsafe.Pointer(&zerobase), old.len, cap}
 	}
-
 	newcap := old.cap
 	doublecap := newcap + newcap
 	if cap > doublecap {
@@ -296,6 +295,7 @@ func growslice(et *_type, old slice, cap int) slice {
 	}
 
 	var p unsafe.Pointer
+	//print("growslice, et.ptrdata:", et.ptrdata, ",capmem:", capmem, "\n")
 	if et.ptrdata == 0 {
 		p = mallocgc(capmem, nil, false)
 		// The append() that calls growslice is going to overwrite from old.len to cap (which will be the new length).
