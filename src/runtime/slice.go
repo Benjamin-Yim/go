@@ -35,6 +35,7 @@ func panicmakeslicecap() {
 
 // makeslicecopy allocates a slice of "tolen" elements of type "et",
 // then copies "fromlen" elements of type "et" into that new allocation from "from".
+// makeslicecopy 分配一个 "et "类型的 "tolen "个元素的 slice，然后将 "et "类型的 "fromlen "个元素从 "from "复制到这个新的内存。
 func makeslicecopy(et *_type, tolen int, fromlen int, from unsafe.Pointer) unsafe.Pointer {
 	var tomem, copymem uintptr
 	if uintptr(tolen) > uintptr(fromlen) {
@@ -45,25 +46,31 @@ func makeslicecopy(et *_type, tolen int, fromlen int, from unsafe.Pointer) unsaf
 		}
 		copymem = et.size * uintptr(fromlen)
 	} else {
+		// 内存整理的时候才会使用？
 		// fromlen is a known good length providing and equal or greater than tolen,
 		// thereby making tolen a good slice length too as from and to slices have the
 		// same element width.
+		// fromlen是一个已知的正常的长度，它等于或大于tolen，从而使tolen也是一个好的切片长度，
+		// 因为from和to切片具有相同的元素宽度。
 		tomem = et.size * uintptr(tolen)
 		copymem = tomem
 	}
 
 	var to unsafe.Pointer
-	if et.ptrdata == 0 {
+	if et.ptrdata == 0 { // 非指针类型
 		to = mallocgc(tomem, nil, false)
 		if copymem < tomem {
+			// 清空内存，没有写屏障
 			memclrNoHeapPointers(add(to, copymem), tomem-copymem)
 		}
 	} else {
 		// Note: can't use rawmem (which avoids zeroing of memory), because then GC can scan uninitialized memory.
+		// 注意：不能使用rawmem（它避免了内存清零），因为这样GC就可以扫描未初始化的内存。
 		to = mallocgc(tomem, et, true)
 		if copymem > 0 && writeBarrier.enabled {
 			// Only shade the pointers in old.array since we know the destination slice to
 			// only contains nil pointers because it has been cleared during alloc.
+			// 只对“old.array”中的指针进行着色处理，因为我们知道目标切片只包含零指针，因为它在分配期间已被清除。
 			bulkBarrierPreWriteSrcOnly(uintptr(to), uintptr(from), copymem)
 		}
 	}
@@ -99,7 +106,7 @@ func makeslice(et *_type, len, cap int) unsafe.Pointer {
 		}
 		panicmakeslicecap()
 	}
-	// 分配一段内存，mem:内存大小，et:内存内类，true:需要清零
+	// 分配一段内存，mem:需要内存大小，et:类型内存结构，true:需要清零
 	return mallocgc(mem, et, true)
 }
 
@@ -175,6 +182,13 @@ func panicunsafeslicenilptr() {
 // to calculate where to write new values during an append.
 // TODO: When the old backend is gone, reconsider this decision.
 // The SSA backend might prefer the new length or to return only ptr/cap and save stack space.
+//
+// growslice在追加过程中处理分片的增长。
+// 它被传递给分片元素类型、旧分片和所需的新的最小容量，并且它返回一个至少具有该容量的新分片，并将旧数据复制到其中。
+// 新 slice 的长度被设置为旧 solice 的长度，而不是新要求的容量。
+// 这是为了编码的方便。在追加过程中，旧片段的长度被立即用来计算在哪里写入新值。
+// TODO: 当旧的后端消失后，重新考虑这个决定。
+// SSA后端可能更喜欢新的长度或者只返回ptr/cap并节省堆栈空间。
 func growslice(et *_type, old slice, cap int) slice {
 	if raceenabled {
 		callerpc := getcallerpc()
@@ -202,16 +216,18 @@ func growslice(et *_type, old slice, cap int) slice {
 	if cap > doublecap {
 		newcap = cap
 	} else {
-		const threshold = 256
-		if old.cap < threshold {
-			newcap = doublecap
+		const threshold = 256    // 阈值
+		if old.cap < threshold { // 就的容量小于阈值
+			newcap = doublecap // 就翻倍增长
 		} else {
 			// Check 0 < newcap to detect overflow
 			// and prevent an infinite loop.
+			// 检查0 < newcap以检测溢出并防止无限循环。
 			for 0 < newcap && newcap < cap {
 				// Transition from growing 2x for small slices
 				// to growing 1.25x for large slices. This formula
 				// gives a smooth-ish transition between the two.
+				// 从小片的增长2倍过渡到大片的增长1.25倍。这个公式在两者之间给出了一个平滑的过渡。
 				newcap += (newcap + 3*threshold) / 4
 			}
 			// Set newcap to the requested cap when

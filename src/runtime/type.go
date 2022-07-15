@@ -34,7 +34,7 @@ const (
 // ../internal/reflectlite/type.go:/^type.rtype.
 type _type struct {
 	size       uintptr // 类型大小
-	ptrdata    uintptr // 含有所有指针类型前缀大小. size of memory prefix holding all pointers
+	ptrdata    uintptr // 保存所有指针的内存前缀的大小.代表当前类型是指针类型？. size of memory prefix holding all pointers
 	hash       uint32  // 类型的 hash 值
 	tflag      tflag   // 类型的 flag，和反射相关
 	align      uint8   // 内存对齐相关
