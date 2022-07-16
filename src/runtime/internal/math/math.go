@@ -10,8 +10,9 @@ const MaxUintptr = ^uintptr(0)
 
 // MulUintptr returns a * b and whether the multiplication overflowed.
 // On supported platforms this is an intrinsic lowered by the compiler.
+// MulUintptr 返回a * b以及乘法是否溢出。在支持的平台上，这是一个由编译器降低的内在因素。
 func MulUintptr(a, b uintptr) (uintptr, bool) {
-	if a|b < 1<<(4*goarch.PtrSize) || a == 0 {
+	if a|b < 1<<(4*goarch.PtrSize) || a == 0 { // 如果要判断两个相乘是否大于等于2^64，只要这两个数都小于2^32就可以了
 		return a * b, false
 	}
 	overflow := b > MaxUintptr/a

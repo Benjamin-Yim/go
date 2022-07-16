@@ -69,15 +69,18 @@ func badsystemstack() {
 }
 
 // memclrNoHeapPointers clears n bytes starting at ptr.
-//
+// memclrNoHeapPointers 清除从 ptr 开始的 n 个字节。
 // Usually you should use typedmemclr. memclrNoHeapPointers should be
 // used only when the caller knows that *ptr contains no heap pointers
 // because either:
+// 通常你应该使用 typedmemclr。只有当调用者知道*ptr不包含堆指针时才可以使用。因为要么：
 //
 // *ptr is initialized memory and its type is pointer-free, or
+// *ptr是已初始化的内存，其类型是无指针的，或者
 //
 // *ptr is uninitialized memory (e.g., memory that's being reused
 // for a new allocation) and hence contains only "junk".
+// *ptr是未初始化的内存（例如，正在被重用的内存 新的分配），因此只包含 "垃圾"。
 //
 // memclrNoHeapPointers ensures that if ptr is pointer-aligned, and n
 // is a multiple of the pointer size, then any pointer-aligned,
@@ -86,7 +89,12 @@ func badsystemstack() {
 // implementation of typedmemclr and memclrHasPointers. See the doc of
 // memmove for more details.
 //
+// memclrNoHeapPointers 确保如果 ptr 是指针对齐的，并且 n 是指针大小的倍数，
+// 那么任何指针对齐的、指针大小的部分被原子地清除。尽管函数名称是这样，但这是必要的，
+// 因为这个函数是 typedmemclr 和 memclrHasPointers 的底层实现。更多细节请参见 memmove 的文档。
+//
 // The (CPU-specific) implementations of this function are in memclr_*.s.
+// 这个函数的（CPU特定）实现在`memclr_*.s`中。
 //
 //go:noescape
 func memclrNoHeapPointers(ptr unsafe.Pointer, n uintptr)

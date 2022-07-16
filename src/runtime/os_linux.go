@@ -177,6 +177,7 @@ func newosproc(mp *m) {
 	// with signals disabled. It will enable them in minit.
 	var oset sigset
 	sigprocmask(_SIG_SETMASK, &sigset_all, &oset)
+	// clone一个系统线程,线程创建后会设置TLS, 设置TLS中当前的g为g0, 然后执行mstart
 	ret := clone(cloneFlags, stk, unsafe.Pointer(mp), unsafe.Pointer(mp.g0), unsafe.Pointer(abi.FuncPCABI0(mstart)))
 	sigprocmask(_SIG_SETMASK, &oset, nil)
 

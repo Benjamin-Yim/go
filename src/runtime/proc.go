@@ -111,8 +111,8 @@ var modinfo string
 //   workers.
 
 var (
-	m0           m
-	g0           g
+	m0           m //代表主线程
+	g0           g //m0绑定的g0，也就是M结构体中m0.g0=&g0
 	mcache0      *mcache
 	raceprocctx0 uintptr
 )
@@ -512,7 +512,7 @@ var (
 	// Readers that cannot take the lock may (carefully!) use the atomic
 	// variables below.
 	allglock mutex
-	allgs    []*g
+	allgs    []*g //保存所有的g
 
 	// allglen and allgptr are atomic variables that contain len(allgs) and
 	// &allgs[0] respectively. Proper ordering depends on totally-ordered
@@ -679,27 +679,27 @@ func schedinit() {
 
 	// raceinit must be the first call to race detector.
 	// In particular, it must be done before mallocinit below calls racemapshadow.
-	_g_ := getg()
+	_g_ := getg() //getg() 在 src/runtime/stubs.go 中声明，真正的代码由编译器生成
 	if raceenabled {
 		_g_.racectx, raceprocctx0 = raceinit()
 	}
-
+	// 设置最大M的数量
 	sched.maxmcount = 10000
 
 	// The world starts stopped.
 	worldStopped()
 
 	moduledataverify()
-	stackinit()
+	stackinit() //初始化栈空间常用管理链表
 	mallocinit()
-	cpuinit()      // must run before alginit
-	alginit()      // maps, hash, fastrand must not be used before this call
-	fastrandinit() // must run before mcommoninit
-	mcommoninit(_g_.m, -1)
-	modulesinit()   // provides activeModules
-	typelinksinit() // uses maps, activeModules
-	itabsinit()     // uses activeModules
-	stkobjinit()    // must run before GC starts
+	cpuinit()              // must run before alginit
+	alginit()              // maps, hash, fastrand must not be used before this call
+	fastrandinit()         // must run before mcommoninit
+	mcommoninit(_g_.m, -1) //初始化当前m
+	modulesinit()          // provides activeModules
+	typelinksinit()        // uses maps, activeModules
+	itabsinit()            // uses activeModules
+	stkobjinit()           // must run before GC starts
 
 	sigsave(&_g_.m.sigmask)
 	initSigmask = _g_.m.sigmask
@@ -716,10 +716,12 @@ func schedinit() {
 
 	lock(&sched.lock)
 	sched.lastpoll = uint64(nanotime())
-	procs := ncpu
+	procs := ncpu // 把p数量从1调整到默认的CPU Core数量
 	if n, ok := atoi32(gogetenv("GOMAXPROCS")); ok && n > 0 {
 		procs = n
 	}
+	// 调整P数量
+	// 这里的P都是新建的，所以不返回有本地任务的p
 	if procresize(procs) != nil {
 		throw("unknown runnable goroutine during bootstrap")
 	}
@@ -784,6 +786,7 @@ func mReserveID() int64 {
 }
 
 // Pre-allocated ID may be passed as 'id', or omitted by passing -1.
+// 预先分配的ID可以作为'id'传递，或者通过传递-1而省略。
 func mcommoninit(mp *m, id int64) {
 	_g_ := getg()
 
@@ -1356,8 +1359,11 @@ func mstart()
 //go:nowritebarrierrec
 func mstart0() {
 	_g_ := getg()
-
 	osStack := _g_.stack.lo == 0
+	if _g_.m.id == 0 {
+		println("Main 正式启动")
+		print("m0.g", _g_.goid, "\n")
+	}
 	if osStack {
 		// Initialize stack bounds from system stack.
 		// Cgo may have left stack size in stack.hi.
@@ -1706,9 +1712,14 @@ type cgothreadstart struct {
 // Can use p for allocation context if needed.
 // fn is recorded as the new m's m.mstartfn.
 // id is optional pre-allocated m ID. Omit by passing -1.
+// 分配一个与任何线程无关的新m。
+// 如果需要，可以使用p作为分配上下文。
+// fn被记录为新m的m.mstartfn。
+// id是可选的预分配的m ID。通过传递-1来省略。
 //
 // This function is allowed to have write barriers even if the caller
 // isn't because it borrows _p_.
+// 这个函数允许有写屏障，即使调用方没有，因为它借用了_p_。
 //
 //go:yeswritebarrierrec
 func allocm(_p_ *p, fn func(), id int64) *m {
@@ -1726,6 +1737,7 @@ func allocm(_p_ *p, fn func(), id int64) *m {
 
 	// Release the free M list. We need to do this somewhere and
 	// this may free up a stack we can use.
+	// 释放空闲的M列表。我们需要在某个地方这样做，这可能会释放一个我们可以使用的堆栈。
 	if sched.freem != nil {
 		lock(&sched.lock)
 		var newList *m
@@ -1748,7 +1760,7 @@ func allocm(_p_ *p, fn func(), id int64) *m {
 		sched.freem = newList
 		unlock(&sched.lock)
 	}
-
+	// 分配一个新的 M 结构和系统线程没有关系
 	mp := new(m)
 	mp.mstartfn = fn
 	mcommoninit(mp, id)
@@ -2099,7 +2111,7 @@ func newm(fn func(), _p_ *p, id int64) {
 	// ensuring that anything added to allm is guaranteed to eventually
 	// start.
 	acquirem()
-
+	// 分配一个 M 实例，但是没有与系统线程挂钩
 	mp := allocm(_p_, fn, id)
 	mp.nextp.set(_p_)
 	mp.sigmask = initSigmask
@@ -2132,6 +2144,7 @@ func newm(fn func(), _p_ *p, id int64) {
 		releasem(getg().m)
 		return
 	}
+	// 会新建一个m的实例, m的实例包含一个g0
 	newm1(mp)
 	releasem(getg().m)
 }
@@ -2295,8 +2308,9 @@ func startm(_p_ *p, spinning bool) {
 			return
 		}
 	}
-	nmp := mget()
+	nmp := mget() // 调用mget从"空闲M链表"获取一个空闲的M
 	if nmp == nil {
+		// 没有空闲的 M，如果没有空闲的M, 则调用newm新建一个M
 		// No M is available, we must drop sched.lock and call newm.
 		// However, we already own a P to assign to the M.
 		//
@@ -2309,7 +2323,7 @@ func startm(_p_ *p, spinning bool) {
 		// thus marking it as 'running' before we drop sched.lock. This
 		// new M will eventually run the scheduler to execute any
 		// queued G's.
-		id := mReserveID()
+		id := mReserveID() // 生成唯一 ID
 		unlock(&sched.lock)
 
 		var fn func()
@@ -2317,7 +2331,7 @@ func startm(_p_ *p, spinning bool) {
 			// The caller incremented nmspinning, so set m.spinning in the new M.
 			fn = mspinning
 		}
-		newm(fn, _p_, id)
+		newm(fn, _p_, id) // 新建一个 M
 		// Ownership transfer of _p_ committed by start in newm.
 		// Preemption is now safe.
 		releasem(mp)
@@ -4089,12 +4103,14 @@ func malg(stacksize int32) *g {
 // Put it on the queue of g's waiting to run.
 // The compiler turns a go statement into a call to this.
 func newproc(fn *funcval) {
+	println("newproc 启动")
 	gp := getg()         // 获取当前待运行的G
 	pc := getcallerpc()  // 获取调用端的地址(返回地址)PC
 	systemstack(func() { // 切换当前的g到g0,并且使用g0的栈空间, 然后调用传入的函数
 		newg := newproc1(fn, gp, pc) // g0 开始调度
 
 		_p_ := getg().m.p.ptr()
+		print("g", newg.goid, "进入运行队列\n")
 		runqput(_p_, newg, true) // 非公平抢占运行
 
 		if mainStarted {
@@ -5803,7 +5819,7 @@ func runqput(_p_ *p, gp *g, next bool) {
 	if randomizeScheduler && next && fastrandn(2) == 0 {
 		next = false
 	}
-	// 抢占 g 的意思，非公平竞争资源
+	// next== true 抢占 g 的意思，非公平竞争资源
 	if next {
 	retryNext:
 		oldnext := _p_.runnext
@@ -6057,8 +6073,8 @@ func runqsteal(_p_, p2 *p, stealRunNextG bool) *g {
 // A gQueue is a dequeue of Gs linked through g.schedlink. A G can only
 // be on one gQueue or gList at a time.
 type gQueue struct {
-	head guintptr
-	tail guintptr
+	head guintptr //队列头
+	tail guintptr //队列尾
 }
 
 // empty reports whether q is empty.
