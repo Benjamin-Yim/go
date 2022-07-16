@@ -519,9 +519,12 @@ const (
 )
 
 // 用于调度的特殊g, 调度和执行系统调用时会切换到这个g
+// M结构体是OS线程的一个抽象，主要负责结合P运行G。
 type m struct {
+	// 系统管理的一个g，执行调度代码时使用的。比如执行用户的goroutine时，就需要把把用户
+	// 的栈信息换到内核线程的栈，以便能够执行用户goroutine
 	g0      *g     // goroutine with scheduling stack
-	morebuf gobuf  // gobuf arg to morestack
+	morebuf gobuf  // goroutine 的堆栈信息 .gobuf arg to morestack .
 	divmod  uint32 // div/mod denominator for arm - known to liblink
 	_       uint32 // align next field to 8 bytes
 
@@ -529,42 +532,42 @@ type m struct {
 	procid        uint64            // for debuggers, but offset not hard-coded
 	gsignal       *g                // signal-handling g
 	goSigStack    gsignalStack      // Go-allocated signal handling stack
-	sigmask       sigset            // storage for saved signal mask
-	tls           [tlsSlots]uintptr // thread-local storage (for x86 extern register)  通过TLS实现m结构体对象与工作线程之间的绑定
+	sigmask       sigset            //  存储信号量掩码 .storage for saved signal mask .
+	tls           [tlsSlots]uintptr // 通过TLS实现m结构体对象与工作线程之间的绑定. thread-local storage (for x86 extern register)
 	mstartfn      func()            // 将以哪个方法开始
-	curg          *g                // current running goroutine 当前运行的g
-	caughtsig     guintptr          // goroutine running during fatal signal
-	p             puintptr          // attached p for executing go code (nil if not executing go code)  当前拥有的P
-	nextp         puintptr          //  唤醒M时, M会拥有这个P
-	oldp          puintptr          // the p that was attached before executing a syscall
+	curg          *g                // 当前运行的用户goroutine的g结构体对象 .current running goroutine
+	caughtsig     guintptr          // goroutine在致命信号期间运行.goroutine running during fatal signal
+	p             puintptr          // 当前工作线程绑定的P，如果没有就为nil. attached p for executing go code (nil if not executing go code)
+	nextp         puintptr          //  暂存与当前M潜在关联的P.唤醒M时, M会拥有这个P
+	oldp          puintptr          // M之前调用的P. the p that was attached before executing a syscall
 	id            int64
 	mallocing     int32
 	throwing      throwType
-	preemptoff    string // if != "", keep curg running on this m
+	preemptoff    string // 当前M是否关闭抢占式调度. if != "", keep curg running on this m
 	locks         int32
 	dying         int32
 	profilehz     int32
-	spinning      bool // m is out of work and is actively looking for work spinning状态：表示当前工作线程正在试图从其它工作线程的本地运行队列偷取goroutine
-	blocked       bool // m is blocked on a note
+	spinning      bool // spinning状态：表示当前工作线程正在试图从其它工作线程的本地运行队列偷取goroutine; 为false，休眠状态. m is out of work and is actively looking for work
+	blocked       bool // m 被阻塞时为 true。m is blocked on a note
 	newSigstack   bool // minit on C thread called sigaltstack
 	printlock     int8
-	incgo         bool   // m is executing a cgo call
-	freeWait      uint32 // if == 0, safe to free g0 and delete m (atomic)
+	incgo         bool   // m 执行 cgo 调用. m is executing a cgo call
+	freeWait      uint32 // 如果等0，安全的释放 g0 并且进行原子的删除m. if == 0, safe to free g0 and delete m (atomic)
 	fastrand      uint64
 	needextram    bool
 	traceback     uint8
-	ncgocall      uint64      // number of cgo calls in total
-	ncgo          int32       // number of cgo calls currently in progress
-	cgoCallersUse uint32      // if non-zero, cgoCallers in use temporarily
-	cgoCallers    *cgoCallers // cgo traceback if crashing in cgo call
+	ncgocall      uint64      // cgo 调用总数. number of cgo calls in total
+	ncgo          int32       // 当前正在调用 cgo 的总数. number of cgo calls currently in progress
+	cgoCallersUse uint32      // 如果不为零，则暂时使用cgoCallers。if non-zero, cgoCallers in use temporarily
+	cgoCallers    *cgoCallers // 如果在调用cgo时出现崩溃，则会出现cgo跟踪记录。cgo traceback if crashing in cgo call
 	park          note        //  M休眠时使用的信号量, 唤醒M时会通过它唤醒
-	alllink       *m          // on allm
+	alllink       *m          // 记录所有工作线程的链表。on allm
 	schedlink     muintptr    // 下一个m, 当m在链表结构中会使用
-	lockedg       guintptr    // lockedm的对应值
-	createstack   [32]uintptr // stack that created this thread.
-	lockedExt     uint32      // tracking for external LockOSThread
-	lockedInt     uint32      // tracking for internal lockOSThread
-	nextwaitm     muintptr    // next m waiting for lock
+	lockedg       guintptr    // 当前M锁定的G。lockedm的对应值
+	createstack   [32]uintptr // 创建此线程的堆栈。stack that created this thread.
+	lockedExt     uint32      // 对外部LockOSThread的跟踪。tracking for external LockOSThread
+	lockedInt     uint32      // 对内部lockOSThread的跟踪。tracking for internal lockOSThread
+	nextwaitm     muintptr    // 下一个 m 将等待锁 next m waiting for lock
 	waitunlockf   func(*g, unsafe.Pointer) bool
 	waitlock      unsafe.Pointer
 	waittraceev   byte
@@ -603,25 +606,26 @@ type m struct {
 }
 
 type p struct {
-	id          int32
-	status      uint32     // one of pidle/prunning/...  p的当前状态
+	id          int32      // allp 中的索引
+	status      uint32     // p的当前状态 . one of pidle/prunning/...
 	link        puintptr   // 下一个p, 当p在链表结构中会使用
-	schedtick   uint32     // incremented on every scheduler call
-	syscalltick uint32     // incremented on every system call
-	sysmontick  sysmontick // last tick observed by sysmon
-	m           muintptr   // back-link to associated m (nil if idle)  拥有这个P的M
+	schedtick   uint32     // 每次scheduler调用+1. incremented on every scheduler call
+	syscalltick uint32     // 每次系统调用+1. incremented on every system call
+	sysmontick  sysmontick // sysmon观察到的最后一个滴答声. last tick observed by sysmon
+	m           muintptr   // 指向绑定的 m，如果 p 是 idle 的话，那这个指针是 nil. back-link to associated m (nil if idle)  拥有这个P的M
 	mcache      *mcache    //  分配内存时使用的本地分配器
 	pcache      pageCache
 	raceprocctx uintptr
 
-	deferpool    []*_defer // pool of available defer structs (see panic.go)
+	deferpool    []*_defer // 不同大小可用defer结构池. pool of available defer structs (see panic.go)
 	deferpoolbuf [32]*_defer
 
+	// 缓存goroutine id，摊销 runtime·sched.goidgen.
 	// Cache of goroutine ids, amortizes accesses to runtime·sched.goidgen.
 	goidcache    uint64
 	goidcacheend uint64
 
-	// Queue of runnable goroutines. Accessed without lock.
+	// 本地运行队列，可以无锁访问. Queue of runnable goroutines. Accessed without lock.
 	runqhead uint32        //  本地运行队列的出队序号
 	runqtail uint32        //  本地运行队列的入队序号
 	runq     [256]guintptr // 本地运行队列的数组, 可以保存256个G
@@ -637,10 +641,16 @@ type p struct {
 	//
 	// Note that while other P's may atomically CAS this to zero,
 	// only the owner P can CAS it to a valid G.
+
+	// runnext 非空时，代表的是一个 runnable 状态的 G，
+	// 这个 G 被 当前 G 修改为 ready 状态，相比 runq 中的 G 有更高的优先级。
+	// 如果当前 G 还有剩余的可用时间，那么就应该运行这个 G
+	// 运行之后，该 G 会继承当前 G 的剩余时间
 	runnext guintptr // 下一个运行的 g
 
 	// Available G's (status == Gdead)
-	gFree struct { // G的自由列表, 保存变为_Gdead后可以复用的G实例
+	// 空闲的g
+	gFree struct { // G的空闲列表, 保存变为_Gdead后可以复用的G实例
 		gList
 		n int32
 	}
@@ -649,12 +659,15 @@ type p struct {
 	sudogbuf   [128]*sudog
 
 	// Cache of mspan objects from the heap.
+	// 缓存来自堆的mspan对象。
 	mspancache struct {
 		// We need an explicit length here because this field is used
 		// in allocation codepaths where write barriers are not allowed,
 		// and eliminating the write barrier/keeping it eliminated from
 		// slice updates is tricky, moreso than just managing the length
 		// ourselves.
+		// 我们在这里需要一个明确的长度，因为这个字段被用于不允许存在写屏障的分配代码路径中，
+		// 而且消除写屏障比保持它不被分片更新所影响是很棘手的，比我们自己管理长度更棘手。
 		len int
 		buf [128]*mspan
 	}
@@ -664,9 +677,12 @@ type p struct {
 	// traceSweep indicates the sweep events should be traced.
 	// This is used to defer the sweep start event until a span
 	// has actually been swept.
+	// traceSweep表示应跟踪扫描事件。
+	// 这是用来推迟扫描开始事件，直到实际扫描了一个 span。
 	traceSweep bool
 	// traceSwept and traceReclaimed track the number of bytes
 	// swept and reclaimed by sweeping in the current sweep loop.
+	// traceSwept和TraceClaimed跟踪当前扫描循环中扫描和通过扫描回收的字节数。
 	traceSwept, traceReclaimed uintptr
 
 	palloc persistentAlloc // per-P to avoid mutex
@@ -676,6 +692,9 @@ type p struct {
 	// The when field of the first entry on the timer heap.
 	// This is updated using atomic functions.
 	// This is 0 if the timer heap is empty.
+	// 计时器堆上第一个条目的when字段。
+	// 这是使用原子函数更新的。
+	// 如果计时器堆为空，则为0。
 	timer0When uint64
 
 	// The earliest known nextwhen field of a timer with
@@ -683,6 +702,10 @@ type p struct {
 	// modified again, there need not be any timer with this value.
 	// This is updated using atomic functions.
 	// This is 0 if there are no timerModifiedEarlier timers.
+	// 具有timerModifiedEarlier状态的计时器的已知最早的nextwhen字段。
+	// 由于计时器可能已再次修改，因此不需要任何具有此值的计时器。
+	// 这是用原子函数更新的。
+	// 如果没有 timerModifiedEarlier 计时器，这个值就是 0。
 	timerModifiedEarliest uint64
 
 	// Per-P GC state
@@ -690,6 +713,7 @@ type p struct {
 	gcFractionalMarkTime int64 // Nanoseconds in fractional mark worker (atomic)
 
 	// limiterEvent tracks events for the GC CPU limiter.
+	// limiterEvent跟踪GC CPU限制器的事件。
 	limiterEvent limiterEvent
 
 	// gcMarkWorkerMode is the mode for the next mark worker to run in.
@@ -697,51 +721,71 @@ type p struct {
 	// selected for immediate execution by
 	// gcController.findRunnableGCWorker. When scheduling other goroutines,
 	// this field must be set to gcMarkWorkerNotWorker.
+	//
+	// gcMarkWorkerMode是下一个标记工作者的运行模式。
+	// 也就是说，这是用来与gcController.findRunnableGCWorker所选择的立即执行的worker goroutine进行通信。
+	// 当调度其他goroutine时，这个字段必须被设置为gcMarkWorkerNotWorker。
 	gcMarkWorkerMode gcMarkWorkerMode
 	// gcMarkWorkerStartTime is the nanotime() at which the most recent
 	// mark worker started.
+	// gcMarkWorkerStartTime是最近一个标记工作者开始的 nanotime()。
 	gcMarkWorkerStartTime int64
 
 	// gcw is this P's GC work buffer cache. The work buffer is
 	// filled by write barriers, drained by mutator assists, and
 	// disposed on certain GC state transitions.
+	// gcw是这个P的GC工作缓冲区缓存。工作缓冲区由写屏障填充，由 mutator 辅助排出，并在某些GC状态转换时进行处理。
 	gcw gcWork // GC的本地工作队列
 
 	// wbBuf is this P's GC write barrier buffer.
-	//
+	// wbBuf是P的GC写屏障缓冲区。
+	// TODO: 考虑将其缓存在正在运行的G中。
 	// TODO: Consider caching this in the running G.
 	wbBuf wbBuf
-
+	// 如果是1，在下一个安全点运行 sched.safePointFn
 	runSafePointFn uint32 // if 1, run sched.safePointFn at next safe point
 
 	// statsSeq is a counter indicating whether this P is currently
 	// writing any stats. Its value is even when not, odd when it is.
+	// statsSeq是一个计数器，表示这个P目前是否正在写任何统计信息。没有的时候它的值是偶数，有的时候是奇数。
 	statsSeq uint32
 
 	// Lock for timers. We normally access the timers while running
 	// on this P, but the scheduler can also do it from a different P.
+	// 计时器的锁。我们通常在这个P上运行时访问定时器，但调度员也可以从不同的P上进行。
 	timersLock mutex
 
 	// Actions to take at some time. This is used to implement the
 	// standard library's time package.
 	// Must hold timersLock to access.
+	// 在某个时间采取的行动。这是用来实现标准库的时间包。
+	// 必须持有timersLock才能访问。
 	timers []*timer
 
 	// Number of timers in P's heap.
 	// Modified using atomic instructions.
+	// P的堆中的定时器数量。
+	// 使用原子指令进行修改。
 	numTimers uint32
 
 	// Number of timerDeleted timers in P's heap.
 	// Modified using atomic instructions.
+	//
+	// P的堆中TimerDeleted定时器的数量。
+	// 使用原子指令进行修改。
 	deletedTimers uint32
 
 	// Race context used while executing timer functions.
+	// 执行计时器函数时使用的竞争上下文。
 	timerRaceCtx uintptr
 
 	// maxStackScanDelta accumulates the amount of stack space held by
 	// live goroutines (i.e. those eligible for stack scanning).
 	// Flushed to gcController.maxStackScan once maxStackScanSlack
 	// or -maxStackScanSlack is reached.
+	//
+	// maxStackScanDelta累积live Goroutine（即符合堆栈扫描条件的goroutine）所持有的堆栈空间量。
+	// 一旦达到maxStackScanSlack或-maxStackScanSlack，就会被刷新到gcController.maxStackScan。
 	maxStackScanDelta int64
 
 	// gc-time statistics about current goroutines
@@ -749,15 +793,19 @@ type p struct {
 	// accumulates the actual stack observed to be used at GC time (hi - sp),
 	// not an instantaneous measure of the total stack size that might need
 	// to be scanned (hi - lo).
-	scannedStackSize uint64 // stack size of goroutines scanned by this P
-	scannedStacks    uint64 // number of goroutines scanned by this P
+	// 关于当前goroutine的gc时间统计数据注意到，这与maxStackScan不同，
+	// 因为它累积了在gc时间（hi-sp）观察到的实际堆栈，而不是可能需要扫描的总堆栈大小的瞬时测量值（hi-lo）。
+	scannedStackSize uint64 // 这个P所扫描的goroutines的堆栈大小. stack size of goroutines scanned by this P
+	scannedStacks    uint64 // 这个P所扫描的goroutines的数量. number of goroutines scanned by this P
 
 	// preempt is set to indicate that this P should be enter the
 	// scheduler ASAP (regardless of what G is running on it).
+	// preempt被设置为表示这个P应该尽快进入调度器（不管它上面运行的是什么G）。
 	preempt bool
 
 	// Padding is no longer needed. False sharing is now not a worry because p is large enough
 	// that its size class is an integer multiple of the cache line size (for any of our architectures).
+	// 不再需要填充。虚假的共享现在不需要担心了，因为p足够大，它的大小类是缓存行大小的整数倍（对于我们的任何架构）。
 }
 
 type schedt struct {
