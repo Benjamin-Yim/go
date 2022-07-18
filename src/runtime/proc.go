@@ -163,9 +163,9 @@ func main() {
 	// since stackalloc works with 32-bit sizes.
 	maxstackceiling = 2 * maxstacksize
 
-	// Allow newproc to start new Ms.
+	// 标记主函数已调用, 设置mainStarted = true。Allow newproc to start new Ms.
 	mainStarted = true
-
+	// 启动一个新的M执行sysmon函数, 这个函数会监控全局的状态并对运行时间过长的G进行抢占
 	if GOARCH != "wasm" { // no threads on wasm yet, so no sysmon
 		systemstack(func() {
 			newm(sysmon, nil, -1)
@@ -179,7 +179,7 @@ func main() {
 	// by calling runtime.LockOSThread during initialization
 	// to preserve the lock.
 	lockOSThread()
-
+	// 要求G必须在当前M(系统主线程)上执行
 	if g.m != &m0 {
 		throw("runtime.main not on m0")
 	}
@@ -195,7 +195,7 @@ func main() {
 		inittrace.id = getg().goid
 		inittrace.active = true
 	}
-
+	// 调用runtime_init函数
 	doInit(&runtime_inittask) // Must be before defer.
 
 	// Defer unlock so that runtime.Goexit during init does the unlock too.
@@ -205,7 +205,7 @@ func main() {
 			unlockOSThread()
 		}
 	}()
-
+	// 调用gcenable函数
 	gcenable()
 
 	main_init_done = make(chan bool)
@@ -229,7 +229,7 @@ func main() {
 		startTemplateThread()
 		cgocall(_cgo_notify_runtime_init_done, nil)
 	}
-
+	// 调用main.init函数, 如果函数存在
 	doInit(&main_inittask)
 
 	// Disable init tracing after main init done to avoid overhead
@@ -237,7 +237,7 @@ func main() {
 	inittrace.active = false
 
 	close(main_init_done)
-
+	// 不再要求G必须在当前M上运行
 	needUnlock = false
 	unlockOSThread()
 
@@ -246,12 +246,12 @@ func main() {
 		// has a main, but it is not executed.
 		return
 	}
-	fn := main_main // make an indirect call, as the linker doesn't know the address of the main package when laying down the runtime
+	fn := main_main // 调用main.main函数. make an indirect call, as the linker doesn't know the address of the main package when laying down the runtime
 	fn()
 	if raceenabled {
 		racefini()
 	}
-
+	// 如果当前发生了panic, 则等待panic处理
 	// Make racy client program work: if panicking on
 	// another goroutine at the same time as main returns,
 	// let the other goroutine finish printing the panic trace.
@@ -268,7 +268,7 @@ func main() {
 	if atomic.Load(&panicking) != 0 {
 		gopark(nil, nil, waitReasonPanicWait, traceEvGoStop, 1)
 	}
-
+	// 调用exit(0)退出程序
 	exit(0)
 	for {
 		var x *int32
@@ -1360,10 +1360,10 @@ func mstart()
 func mstart0() {
 	_g_ := getg()
 	osStack := _g_.stack.lo == 0
-	if _g_.m.id == 0 {
-		println("Main 正式启动")
-		print("m0.g", _g_.goid, "\n")
-	}
+	//if _g_.m.id == 0 {
+	//println("Main 正式启动")
+	//print("m0.g", _g_.goid, "\n")
+	//}
 	if osStack {
 		// Initialize stack bounds from system stack.
 		// Cgo may have left stack size in stack.hi.
@@ -4103,14 +4103,14 @@ func malg(stacksize int32) *g {
 // Put it on the queue of g's waiting to run.
 // The compiler turns a go statement into a call to this.
 func newproc(fn *funcval) {
-	println("newproc 启动")
+	//println("newproc 启动")
 	gp := getg()         // 获取当前待运行的G
 	pc := getcallerpc()  // 获取调用端的地址(返回地址)PC
 	systemstack(func() { // 切换当前的g到g0,并且使用g0的栈空间, 然后调用传入的函数
 		newg := newproc1(fn, gp, pc) // g0 开始调度
 
 		_p_ := getg().m.p.ptr()
-		print("g", newg.goid, "进入运行队列\n")
+		//print("g", newg.goid, "进入运行队列\n")
 		runqput(_p_, newg, true) // 非公平抢占运行
 
 		if mainStarted {

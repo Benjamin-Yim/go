@@ -113,3 +113,19 @@ func mayMoreStackMove() {
 		g.stackguard0 = stackForceMove
 	}
 }
+
+func G_id() int64 {
+	curG := getg()
+	if curG.m.curg != curG {
+		return -1
+	}
+	return curG.goid
+}
+
+func M_id() int64 {
+	curG := getg()
+	if curG.m.curg != curG {
+		return -1
+	}
+	return curG.m.id
+}

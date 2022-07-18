@@ -5683,6 +5683,8 @@ pkg runtime, func MemProfile([]MemProfileRecord, bool) (int, bool)
 pkg runtime, func NumCPU() int
 pkg runtime, func NumCgoCall() int64
 pkg runtime, func NumGoroutine() int
+pkg runtime, func G_id() int64
+pkg runtime, func M_id() int64
 pkg runtime, func ReadMemStats(*MemStats)
 pkg runtime, func SetCPUProfileRate(int)
 pkg runtime, func SetFinalizer(interface{}, interface{})
