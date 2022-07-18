@@ -223,6 +223,9 @@ func memequal(a, b unsafe.Pointer, size uintptr) bool
 // output depends on the input.  noescape is inlined and currently
 // compiles down to zero instructions.
 // USE CAREFULLY!
+// noescape隐藏了一个指针，以防止逃逸分析。
+// noescape是一个可识别函数，但逃逸分析不认为输出取决于输入。
+// noescape是内联的，目前编译为零指令。
 //
 //go:nosplit
 func noescape(p unsafe.Pointer) unsafe.Pointer {

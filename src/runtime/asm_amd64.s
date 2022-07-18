@@ -348,7 +348,7 @@ ok:
 	// 创建一个goroutine，然后开启执行程序
 	MOVQ	$runtime·mainPC(SB), AX		// entry
 	PUSHQ	AX
-	CALL	runtime·newproc(SB)
+	CALL	runtime·newproc(SB)   // G 初始化
 	POPQ	AX
 
 	// start this M
