@@ -392,6 +392,7 @@ func gettid() uint32
 
 // Called to initialize a new m (including the bootstrap m).
 // Called on the new thread, cannot allocate memory.
+// 设置当前线程可以接收的信号(signal)
 func minit() {
 	minitSignals()
 

@@ -142,6 +142,7 @@ var runtimeInitTime int64
 var initSigmask sigset
 
 // The main goroutine.
+// 程序启动时会先创建一个G, 指向这个 main
 func main() {
 	g := getg()
 
@@ -152,7 +153,7 @@ func main() {
 	// Max stack size is 1 GB on 64-bit, 250 MB on 32-bit.
 	// Using decimal instead of binary GB and MB because
 	// they look nicer in the stack overflow failure message.
-	if goarch.PtrSize == 8 {
+	if goarch.PtrSize == 8 { // 最大栈大小，64位系统 1GB。32 位系统 250 MB
 		maxstacksize = 1000000000
 	} else {
 		maxstacksize = 250000000
@@ -166,7 +167,7 @@ func main() {
 	// 标记主函数已调用, 设置mainStarted = true。Allow newproc to start new Ms.
 	mainStarted = true
 	// 启动一个新的M执行sysmon函数, 这个函数会监控全局的状态并对运行时间过长的G进行抢占
-	if GOARCH != "wasm" { // no threads on wasm yet, so no sysmon
+	if GOARCH != "wasm" { // wasm上还没有线程，所以没有sysmon.no threads on wasm yet, so no sysmon.
 		systemstack(func() {
 			newm(sysmon, nil, -1)
 		})
@@ -246,6 +247,7 @@ func main() {
 		// has a main, but it is not executed.
 		return
 	}
+	println("// 去运行 main 函数")
 	fn := main_main // 调用main.main函数. make an indirect call, as the linker doesn't know the address of the main package when laying down the runtime
 	fn()
 	if raceenabled {
@@ -1359,15 +1361,18 @@ func mstart()
 //go:nowritebarrierrec
 func mstart0() {
 	_g_ := getg()
+	// 判断当前 g 是否分配过栈空间
 	osStack := _g_.stack.lo == 0
 	//if _g_.m.id == 0 {
 	//println("Main 正式启动")
 	//print("m0.g", _g_.goid, "\n")
 	//}
 	if osStack {
-		// Initialize stack bounds from system stack.
-		// Cgo may have left stack size in stack.hi.
-		// minit may update the stack bounds.
+		// 没有分配过
+		//
+		// 从当前的栈空间(系统栈空间)上分配 Initialize stack bounds from system stack.
+		//  Cgo可能在 "stack.hi "中预留了堆栈大小。Cgo may have left stack size in stack.hi.
+		// minit 可能会更新堆栈界线。minit may update the stack bounds.
 		//
 		// Note: these bounds may not be very accurate.
 		// We set hi to &size, but there are things above
@@ -1382,6 +1387,8 @@ func mstart0() {
 	}
 	// Initialize stack guard so that we can start calling regular
 	// Go code.
+	// 初始化堆栈保护，这样我们就可以开始调用普通的Go代码。
+	// 设置 g 哨兵阈值位置。
 	_g_.stackguard0 = _g_.stack.lo + _StackGuard
 	// This is the g0, so we can also call go:systemstack
 	// functions, which check stackguard1.
@@ -3192,8 +3199,10 @@ func injectglist(glist *gList) {
 
 // One round of scheduler: find a runnable goroutine and execute it.
 // Never returns.
+// 调用schedule函数后就进入了调度循环。进入一个调度循环：发现一个可运行的 goroutine 并且执行这个 goroutinge
+// 没有返回
 func schedule() {
-	_g_ := getg()
+	_g_ := getg() // schedule函数获取g
 
 	if _g_.m.locks != 0 {
 		throw("schedule: holding locks")
@@ -3206,6 +3215,7 @@ func schedule() {
 
 	// We should not schedule away from a g that is executing a cgo call,
 	// since the cgo call is using the m's g0 stack.
+	// 判断当前 g 所属的 m 是否在 cgo 调用
 	if _g_.m.incgo {
 		throw("schedule: in cgo")
 	}
@@ -3215,12 +3225,15 @@ top:
 	pp.preempt = false
 
 	// Safety check: if we are spinning, the run queue should be empty.
+	// 安全检查：如果我们正在旋转，运行队列应该是空的。
 	// Check this before calling checkTimers, as that might call
 	// goready to put a ready goroutine on the local run queue.
+	// 在调用 checkTimers 之前检查这一点，因为这可能会调用 goready
+	// 来把一个准备好的 goroutine 放到本地运行队列中。
 	if _g_.m.spinning && (pp.runnext != 0 || pp.runqhead != pp.runqtail) {
 		throw("schedule: spinning with local work")
 	}
-
+	// block 直到有可运行的 g，睡眠中
 	gp, inheritTime, tryWakeP := findRunnable() // blocks until work is available
 
 	// This thread is going to run a goroutine and is not spinning anymore,
@@ -4103,14 +4116,18 @@ func malg(stacksize int32) *g {
 // Put it on the queue of g's waiting to run.
 // The compiler turns a go statement into a call to this.
 func newproc(fn *funcval) {
-	//println("newproc 启动")
+	//if gogetenv("GOLOG") == "true" {
+	println("新建一个协程，name:", fn.fn)
+	//}
 	gp := getg()         // 获取当前待运行的G
 	pc := getcallerpc()  // 获取调用端的地址(返回地址)PC
 	systemstack(func() { // 切换当前的g到g0,并且使用g0的栈空间, 然后调用传入的函数
 		newg := newproc1(fn, gp, pc) // g0 开始调度
 
 		_p_ := getg().m.p.ptr()
-		//print("g", newg.goid, "进入运行队列\n")
+		//if gogetenv("GOLOG") == "true" {
+		print("g", newg.goid, "进入运行队列\n")
+		//}
 		runqput(_p_, newg, true) // 非公平抢占运行
 
 		if mainStarted {
@@ -5040,9 +5057,9 @@ func incidlelocked(v int32) {
 	unlock(&sched.lock)
 }
 
-// Check for deadlock situation.
-// The check is based on number of running M's, if 0 -> deadlock.
-// sched.lock must be held.
+// 检查死锁情况。Check for deadlock situation.
+// 检查是基于运行中的M的数量，如果0->死锁。The check is based on number of running M's, if 0 -> deadlock.
+// sched.lock必须被持有。sched.lock must be held.
 func checkdead() {
 	assertLockHeld(&sched.lock)
 
@@ -5158,11 +5175,14 @@ var forcegcperiod int64 = 2 * 60 * 1e9
 var needSysmonWorkaround bool = false
 
 // Always runs without a P, so write barriers are not allowed.
+// 始终在没有P的情况下运行，因此不允许使用写屏障。
+// Go Runtime 在启动程序的时候，会创建一个独立的 M 作为监控线程，称为 sysmon，它是一个系统级的 daemon 线程。
+// 这个sysmon 独立于 GPM 之外，也就是说不需要P就可以运行，因此官方工具 go tool trace 是无法追踪分析到此线程
 //
 //go:nowritebarrierrec
 func sysmon() {
 	lock(&sched.lock)
-	sched.nmsys++
+	sched.nmsys++ // 系统 m 加1
 	checkdead()
 	unlock(&sched.lock)
 
@@ -5171,6 +5191,7 @@ func sysmon() {
 	delay := uint32(0)
 
 	for {
+		// 每隔 20us~10ms 轮询执行一次
 		if idle == 0 { // start with 20us sleep...
 			delay = 20
 		} else if idle > 50 { // start doubling the sleep after 1ms...
