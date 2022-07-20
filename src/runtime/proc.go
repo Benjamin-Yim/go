@@ -2534,6 +2534,7 @@ func gcstopm() {
 //
 //go:yeswritebarrierrec
 func execute(gp *g, inheritTime bool) {
+	// 调用getg获取当前的g
 	_g_ := getg()
 
 	if goroutineProfile.active {
@@ -2545,13 +2546,18 @@ func execute(gp *g, inheritTime bool) {
 
 	// Assign gp.m before entering _Grunning so running Gs have an
 	// M.
+	// 设置g.m.curg = g
 	_g_.m.curg = gp
+	// 设置g.m = m
 	gp.m = _g_.m
+	// 把G的状态由待运行(_Grunnable)改为运行中(_Grunning)
 	casgstatus(gp, _Grunnable, _Grunning)
 	gp.waitsince = 0
 	gp.preempt = false
+	// 设置G的stackguard, 栈空间不足时可以扩张
 	gp.stackguard0 = gp.stack.lo + _StackGuard
 	if !inheritTime {
+		// 增加P中记录的调度次数(对应上面的每61次优先获取一次全局运行队列)
 		_g_.m.p.ptr().schedtick++
 	}
 
@@ -3113,6 +3119,7 @@ func wakeNetPoller(when int64) {
 	}
 }
 
+// resetspinning 如果当前有空闲的P, 但是无自旋的M(nmspinning等于0), 则唤醒或新建一个M
 func resetspinning() {
 	_g_ := getg()
 	if !_g_.m.spinning {
@@ -3241,6 +3248,7 @@ top:
 	// This thread is going to run a goroutine and is not spinning anymore,
 	// so if it was marked as spinning we need to reset it now and potentially
 	// start a new spinning M.
+	// 让M离开自旋状态, 调用resetspinning, 这里的处理和上面的不一样
 	if _g_.m.spinning {
 		resetspinning()
 	}
@@ -3267,13 +3275,16 @@ top:
 	if tryWakeP {
 		wakep()
 	}
+	// 如果G要求回到指定的M(例如上面的runtime.main)
 	if gp.lockedm != 0 {
 		// Hands off own p to the locked m,
 		// then blocks waiting for a new p.
+		// 调用startlockedm函数把G和P交给该M, 自己进入休眠
 		startlockedm(gp)
+		// 从休眠唤醒后跳到schedule的顶部重试
 		goto top
 	}
-
+	// 调用execute函数执行G
 	execute(gp, inheritTime)
 }
 
@@ -3501,16 +3512,18 @@ func goexit1() {
 	mcall(goexit0)
 }
 
+// G结束后回到g0 调用 schedule函数, 这样就形成了一个调度循环.
 // goexit continuation on g0.
 func goexit0(gp *g) {
 	_g_ := getg()
 	_p_ := _g_.m.p.ptr()
-
+	// 把G的状态由运行中(_Grunning)改为已中止(_Gdead)
 	casgstatus(gp, _Grunning, _Gdead)
 	gcController.addScannableStack(_p_, -int64(gp.stack.hi-gp.stack.lo))
 	if isSystemGoroutine(gp, false) {
 		atomic.Xadd(&sched.ngsys, -1)
 	}
+	// 清空G的成员
 	gp.m = nil
 	locked := gp.lockedm != 0
 	gp.lockedm = 0
@@ -3534,7 +3547,7 @@ func goexit0(gp *g) {
 		atomic.Xaddint64(&gcController.bgScanCredit, scanCredit)
 		gp.gcAssistBytes = 0
 	}
-
+	// 调用dropg函数解除M和G之间的关联
 	dropg()
 
 	if GOARCH == "wasm" { // no threads yet on wasm
@@ -3546,6 +3559,7 @@ func goexit0(gp *g) {
 		print("invalid m->lockedInt = ", _g_.m.lockedInt, "\n")
 		throw("internal lockOSThread error")
 	}
+	// 调用gfput函数把G放到P的自由列表中, 下次创建G时可以复用
 	gfput(_p_, gp)
 	if locked {
 		// The goroutine may have locked this thread because
@@ -3562,6 +3576,7 @@ func goexit0(gp *g) {
 			_g_.m.lockedExt = 0
 		}
 	}
+	// 调用schedule函数继续调度
 	schedule()
 }
 

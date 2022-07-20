@@ -408,17 +408,17 @@ TEXT runtime·gogo(SB), NOSPLIT, $0-8
 TEXT gogo<>(SB), NOSPLIT, $0
 	get_tls(CX)
 	MOVQ	DX, g(CX)
-	MOVQ	DX, R14		// set the g register
-	MOVQ	gobuf_sp(BX), SP	// restore SP
-	MOVQ	gobuf_ret(BX), AX
-	MOVQ	gobuf_ctxt(BX), DX
-	MOVQ	gobuf_bp(BX), BP
-	MOVQ	$0, gobuf_sp(BX)	// clear to help garbage collector
-	MOVQ	$0, gobuf_ret(BX)
+	MOVQ	DX, R14		// 设置TLS中的g为g.sched.g, 也就是g自身. set the g register
+	MOVQ	gobuf_sp(BX), SP	// 设置rsp寄存器为g.sched.rsp. restore SP
+	MOVQ	gobuf_ret(BX), AX   // 设置rax寄存器为g.sched.ret
+	MOVQ	gobuf_ctxt(BX), DX  // 设置rdx寄存器为g.sched.ctxt (上下文)
+	MOVQ	gobuf_bp(BX), BP    // 设置rbp寄存器为g.sched.rbp
+	MOVQ	$0, gobuf_sp(BX)	// 清空sched中保存的信息. clear to help garbage collector
+	MOVQ	$0, gobuf_ret(BX)   //
 	MOVQ	$0, gobuf_ctxt(BX)
 	MOVQ	$0, gobuf_bp(BX)
-	MOVQ	gobuf_pc(BX), BX
-	JMP	BX
+	MOVQ	gobuf_pc(BX), BX // 跳转到g.sched.pc
+	JMP	BX   // 跳转到g.sched.pc
 
 // func mcall(fn func(*g))
 // Switch to m->g0's stack, call fn(g).
@@ -445,10 +445,11 @@ goodm:
 	MOVQ	SI, R14		// g = g.m.g0
 	get_tls(CX)		// Set G in TLS
 	MOVQ	R14, g(CX)
+	// 设置寄存器rsp等于 g0.sched.sp , 使用g0的栈空间
 	MOVQ	(g_sched+gobuf_sp)(R14), SP	// sp = g0.sched.sp
 	PUSHQ	AX	// open up space for fn's arg spill slot
 	MOVQ	0(DX), R12
-	CALL	R12		// fn(g)
+	CALL	R12		// 调用指定的函数 fn(g)
 	POPQ	AX
 	JMP	runtime·badmcall2(SB)
 	RET
