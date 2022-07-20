@@ -241,7 +241,7 @@ func main() {
 	// 不再要求G必须在当前M上运行
 	needUnlock = false
 	unlockOSThread()
-
+	// 如果程序是作为c的类库编译的, 在这里返回
 	if isarchive || islibrary {
 		// A program compiled with -buildmode=c-archive or c-shared
 		// has a main, but it is not executed.
@@ -254,6 +254,8 @@ func main() {
 		racefini()
 	}
 	// 如果当前发生了panic, 则等待panic处理
+	// 让 racy 客户端程序工作：如果在 main 返回的同时在另一个 goroutine 上panic，
+	// 让另一个 goroutine 完成打印 panic trace。 一旦完成，它将退出。 请参阅问题 3934 和 20018。
 	// Make racy client program work: if panicking on
 	// another goroutine at the same time as main returns,
 	// let the other goroutine finish printing the panic trace.

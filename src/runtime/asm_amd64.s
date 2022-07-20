@@ -195,14 +195,14 @@ notintel:
 	MOVL	AX, runtime·processorVersionInfo(SB)
 
 nocpuinfo:
-	// if there is an _cgo_init, call it.
+	// 调用_cgo_init如果函数存在. if there is an _cgo_init, call it.
 	MOVQ	_cgo_init(SB), AX
 	TESTQ	AX, AX
 	JZ	needtls
 	// arg 1: g0, already in DI
 	MOVQ	$setg_gcc<>(SB), SI // arg 2: setg_gcc
 #ifdef GOOS_android
-	MOVQ	$runtime·tls_g(SB), DX 	// arg 3: &tls_g
+	MOVQ	$runtime·tls_g(SB), DX 	// 初始化当前线程的TLS, 设置FS寄存器为m0.tls+8. arg 3: &tls_g
 	// arg 4: TLS base, stored in slot 0 (Android's TLS_SLOT_SELF).
 	// Compensate for tls_g (+16).
 	MOVQ	-16(TLS), CX
@@ -264,7 +264,7 @@ needtls:
 ok:
 	// set the per-goroutine and per-mach "registers"
 	get_tls(BX)
-	LEAQ	runtime·g0(SB), CX // 将当前的栈和资源保存在g0
+	LEAQ	runtime·g0(SB), CX // 设置g0到TLS中, 表示当前的g是g0
 	MOVQ	CX, g(BX)
 	LEAQ	runtime·m0(SB), AX // 将该线程保存在m0
 
@@ -333,9 +333,9 @@ ok:
 	CMPQ	BX, CX
 	JNE	bad_cpu
 #endif
-
+    // 调用runtime.check做一些检查
 	CALL	runtime·check(SB)
-
+    // 调用runtime.args保存传入的argc和argv到全局变量
 	MOVL	24(SP), AX		// copy argc
 	MOVL	AX, 0(SP)
 	MOVQ	32(SP), AX		// copy argv
@@ -345,13 +345,14 @@ ok:
 	CALL	runtime·schedinit(SB) // 调度系统初始化, proc.go
 
 	// create a new goroutine to start program
-	// 创建一个goroutine，然后开启执行程序
+	// 创建一个goroutine，然后开启执行程序.runtime.main 作为参数到 AX
 	MOVQ	$runtime·mainPC(SB), AX		// entry
 	PUSHQ	AX
-	CALL	runtime·newproc(SB)   // G 初始化
+	CALL	runtime·newproc(SB)   // 先创建一个 G，G 初始化
 	POPQ	AX
 
 	// start this M
+	// 启动后m0会不断从运行队列获取G并运行, runtime.mstart调用后不会返回
 	// 启动线程，并且启动调度系统
 	CALL	runtime·mstart(SB)
 
