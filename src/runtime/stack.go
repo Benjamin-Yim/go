@@ -1123,6 +1123,7 @@ func nilfunc() {
 	*(*uint8)(nil) = 0
 }
 
+// 设置sched.pc等于目标函数的地址
 // adjust Gobuf as if it executed a call to fn
 // and then stopped before the first instruction in fn.
 func gostartcallfn(gobuf *gobuf, fv *funcval) {

@@ -11,6 +11,7 @@ import (
 	"unsafe"
 )
 
+// 设置sched.pc等于目标函数的地址
 // adjust Gobuf as if it executed a call to fn with context ctxt
 // and then stopped before the first instruction in fn.
 func gostartcall(buf *gobuf, fn, ctxt unsafe.Pointer) {

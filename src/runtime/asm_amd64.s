@@ -160,23 +160,23 @@ TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 	// copy arguments forward on an even stack
 	MOVQ	DI, AX		// argc
 	MOVQ	SI, BX		// argv
-	SUBQ	$(5*8), SP		// 3args 2auto
+	SUBQ	$(5*8), SP		// 3args 2auto 分配栈空间, 需要2个本地变量+2个函数参数, 然后向8对齐
 	ANDQ	$~15, SP
 	MOVQ	AX, 24(SP)
-	MOVQ	BX, 32(SP)
+	MOVQ	BX, 32(SP) // 把传入的argc和argv保存到栈上
 
 	// create istack out of the given (operating system) stack.
 	// _cgo_init may update stackguard.
 	MOVQ	$runtime·g0(SB), DI
 	LEAQ	(-64*1024+104)(SP), BX
-	MOVQ	BX, g_stackguard0(DI)
+	MOVQ	BX, g_stackguard0(DI) // 更新g0中的stackguard的值, stackguard用于检测栈空间是否不足, 需要分配新的栈空间
 	MOVQ	BX, g_stackguard1(DI)
 	MOVQ	BX, (g_stack+stack_lo)(DI)
 	MOVQ	SP, (g_stack+stack_hi)(DI)
 
 	// find out information about the processor we're on
 	MOVL	$0, AX
-	CPUID
+	CPUID // 获取当前cpu的信息并保存到各个全局变量
 	CMPL	AX, $0
 	JE	nocpuinfo
 
@@ -195,7 +195,7 @@ notintel:
 	MOVL	AX, runtime·processorVersionInfo(SB)
 
 nocpuinfo:
-	// if there is an _cgo_init, call it.
+	// 调用_cgo_init如果函数存在. if there is an _cgo_init, call it.
 	MOVQ	_cgo_init(SB), AX
 	TESTQ	AX, AX
 	JZ	needtls
@@ -250,7 +250,7 @@ needtls:
 	// skip TLS setup on OpenBSD
 	JMP ok
 #endif
-
+    // 初始化当前线程的TLS, 设置FS寄存器为m0.tls+8(获取时会-8)
 	LEAQ	runtime·m0+m_tls(SB), DI
 	CALL	runtime·settls(SB)
 
@@ -264,9 +264,9 @@ needtls:
 ok:
 	// set the per-goroutine and per-mach "registers"
 	get_tls(BX)
-	LEAQ	runtime·g0(SB), CX // 将当前的栈和资源保存在g0
+	LEAQ	runtime·g0(SB), CX // 将g0 保存到寄存器
 	MOVQ	CX, g(BX)
-	LEAQ	runtime·m0(SB), AX // 将该线程保存在m0
+	LEAQ	runtime·m0(SB), AX  // 将 m0 保存到寄存器
 
 	// save m->g0 = g0
 	MOVQ	CX, m_g0(AX) // m0和g0互相绑定
@@ -333,9 +333,9 @@ ok:
 	CMPQ	BX, CX
 	JNE	bad_cpu
 #endif
-
+    // 调用 runtime.check 做一些检查
 	CALL	runtime·check(SB)
-
+    // 调用runtime.args保存传入的argc和argv到全局变量
 	MOVL	24(SP), AX		// copy argc
 	MOVL	AX, 0(SP)
 	MOVQ	32(SP), AX		// copy argv
@@ -463,18 +463,18 @@ TEXT runtime·systemstack_switch(SB), NOSPLIT, $0-0
 // func systemstack(fn func())
 TEXT runtime·systemstack(SB), NOSPLIT, $0-8
 	MOVQ	fn+0(FP), DI	// DI = fn
-	get_tls(CX)
+	get_tls(CX) // MOVQ TLS, r
 	MOVQ	g(CX), AX	// AX = g
 	MOVQ	g_m(AX), BX	// BX = m
 
-	CMPQ	AX, m_gsignal(BX)
+	CMPQ	AX, m_gsignal(BX) //g == m.g0?
 	JEQ	noswitch
 
 	MOVQ	m_g0(BX), DX	// DX = g0
-	CMPQ	AX, DX
+	CMPQ	AX, DX // g=g0?
 	JEQ	noswitch
 
-	CMPQ	AX, m_curg(BX)
+	CMPQ	AX, m_curg(BX) // g == m.g 当前g 没有发生上下文切换
 	JNE	bad
 
 	// switch stacks
@@ -485,10 +485,10 @@ TEXT runtime·systemstack(SB), NOSPLIT, $0-8
 	// switch to g0
 	MOVQ	DX, g(CX)
 	MOVQ	DX, R14 // set the g register
-	MOVQ	(g_sched+gobuf_sp)(DX), BX
+	MOVQ	(g_sched+gobuf_sp)(DX), BX // 设置栈
 	MOVQ	BX, SP
 
-	// call target function
+	// call target function。调用当前方法，匿名方法
 	MOVQ	DI, DX
 	MOVQ	0(DI), DI
 	CALL	DI
