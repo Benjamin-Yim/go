@@ -544,7 +544,7 @@ func allgadd(gp *g) {
 	if &allgs[0] != allgptr {
 		atomicstorep(unsafe.Pointer(&allgptr), unsafe.Pointer(&allgs[0]))
 	}
-	atomic.Storeuintptr(&allglen, uintptr(len(allgs)))
+	atomic.Storeuintptr(&allglen, uintptr(len(allgs))) //更新全局 g的数量
 	unlock(&allglock)
 }
 
@@ -2301,7 +2301,7 @@ func startm(_p_ *p, spinning bool) {
 	// startm. Callers passing a nil P may be preemptible, so we must
 	// disable preemption before acquiring a P from pidleget below.
 	mp := acquirem()  // 获取 m
-	lock(&sched.lock) // 禁止被其他 p 抢占
+	lock(&sched.lock) // 禁止M被其他 p 抢占
 	if _p_ == nil {   // 是空的
 		_p_, _ = pidleget(0) // 获取一个空闲的P
 		if _p_ == nil {
@@ -4098,14 +4098,14 @@ func syscall_runtime_AfterExec() {
 
 // Allocate a new g, with a stack big enough for stacksize bytes.
 func malg(stacksize int32) *g {
-	newg := new(g)
+	newg := new(g) // 新建一个 g
 	if stacksize >= 0 {
-		stacksize = round2(_StackSystem + stacksize)
+		stacksize = round2(_StackSystem + stacksize) // 分配 2kb 栈
 		systemstack(func() {
-			newg.stack = stackalloc(uint32(stacksize))
+			newg.stack = stackalloc(uint32(stacksize)) // 正式分配栈
 		})
-		newg.stackguard0 = newg.stack.lo + _StackGuard
-		newg.stackguard1 = ^uintptr(0)
+		newg.stackguard0 = newg.stack.lo + _StackGuard // 设置栈底
+		newg.stackguard1 = ^uintptr(0)                 // 栈顶初始化为 0
 		// Clear the bottom word of the stack. We record g
 		// there on gsignal stack during VDSO on ARM and ARM64.
 		*(*uintptr)(unsafe.Pointer(newg.stack.lo)) = 0
@@ -4130,8 +4130,9 @@ func newproc(fn *funcval) {
 		//if gogetenv("GOLOG") == "true" {
 		print("g", newg.goid, "进入运行队列\n")
 		//}
+		// 调用runqput把g放到运行队列
 		runqput(_p_, newg, true) // 非公平抢占运行
-
+		// 如果主函数已经启动，就开始唤醒调度
 		if mainStarted {
 			wakep() // 尝试去运行 g
 		}
@@ -4222,7 +4223,7 @@ func newproc1(fn *funcval, callergp *g, callerpc uintptr) *g {
 	// 设置g的状态为待运行(_Grunnable)
 	casgstatus(newg, _Gdead, _Grunnable)
 	gcController.addScannableStack(_p_, int64(newg.stack.hi-newg.stack.lo))
-
+	// 分配 goid
 	if _p_.goidcache == _p_.goidcacheend {
 		// Sched.goidgen is the last allocated id,
 		// this batch must be [sched.goidgen+1, sched.goidgen+GoidCacheBatch].
@@ -5861,10 +5862,12 @@ retry:
 	h := atomic.LoadAcq(&_p_.runqhead) // load-acquire, synchronize with consumers
 	t := _p_.runqtail
 	if t-h < uint32(len(_p_.runq)) {
+		// 尝试把g放到P的"本地运行队列"
 		_p_.runq[t%uint32(len(_p_.runq))].set(gp)
 		atomic.StoreRel(&_p_.runqtail, t+1) // store-release, makes the item available for consumption
 		return
 	}
+	// 如果本地运行队列满了则调用runqputslow把g放到"全局运行队列"
 	// 将本地一批的 g 放入到全局队列
 	// 会把本地运行队列中一半的g
 	if runqputslow(_p_, gp, h, t) {
