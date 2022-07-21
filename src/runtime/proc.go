@@ -5241,12 +5241,12 @@ func sysmon() {
 
 	for {
 		// 每隔 20us~10ms 轮询执行一次
-		if idle == 0 { // start with 20us sleep...
+		if idle == 0 { // start with 20us sleep... 一开始是 20us
 			delay = 20
-		} else if idle > 50 { // start doubling the sleep after 1ms...
+		} else if idle > 50 { // start doubling the sleep after 1ms... 然后 1ms
 			delay *= 2
 		}
-		if delay > 10*1000 { // up to 10ms
+		if delay > 10*1000 { // up to 10ms  最终是 10ms
 			delay = 10 * 1000
 		}
 		usleep(delay)
@@ -5307,10 +5307,13 @@ func sysmon() {
 		now = nanotime()
 
 		// trigger libc interceptors if needed
+		// 如果需要触发 libc 中断。在 cgo 的情况下
 		if *cgo_yield != nil {
 			asmcgocall(*cgo_yield, nil)
 		}
 		// poll network if not polled for more than 10ms
+		// 轮询网络 fd ，如果 10ms 内没有轮询过
+		// 不会发生延迟么？???
 		lastpoll := int64(atomic.Load64(&sched.lastpoll))
 		if netpollinited() && lastpoll != 0 && lastpoll+10*1000*1000 < now {
 			atomic.Cas64(&sched.lastpoll, uint64(lastpoll), uint64(now))
@@ -5354,12 +5357,14 @@ func sysmon() {
 		}
 		// retake P's blocked in syscalls
 		// and preempt long running G's
+		// retake P 阻塞在系统调用并且抢占长时间运行的 G
 		if retake(now) != 0 {
 			idle = 0
 		} else {
 			idle++
 		}
 		// check if we need to force a GC
+		// 验证我们是否需要强制 GC
 		if t := (gcTrigger{kind: gcTriggerTime, now: now}); t.test() && atomic.Load(&forcegc.idle) != 0 {
 			lock(&forcegc.lock)
 			forcegc.idle = 0
@@ -5376,17 +5381,18 @@ func sysmon() {
 	}
 }
 
+// 系统门滴答
 type sysmontick struct {
-	schedtick   uint32
-	schedwhen   int64
-	syscalltick uint32
-	syscallwhen int64
+	schedtick   uint32 //处理器的调度次数
+	schedwhen   int64  //处理器上次调度时间
+	syscalltick uint32 //系统调用的次数
+	syscallwhen int64  //系统调用的时间
 }
 
 // forcePreemptNS is the time slice given to a G before it is
 // preempted.
 const forcePreemptNS = 10 * 1000 * 1000 // 10ms
-
+// retake 函数负责处理抢
 func retake(now int64) uint32 {
 	n := 0
 	// Prevent allp slice changes. This lock will be completely
@@ -5395,6 +5401,7 @@ func retake(now int64) uint32 {
 	// We can't use a range loop over allp because we may
 	// temporarily drop the allpLock. Hence, we need to re-fetch
 	// allp each time around the loop.
+	// 枚举所有的P
 	for i := 0; i < len(allp); i++ {
 		_p_ := allp[i]
 		if _p_ == nil {
@@ -5412,14 +5419,17 @@ func retake(now int64) uint32 {
 				pd.schedtick = uint32(t)
 				pd.schedwhen = now
 			} else if pd.schedwhen+forcePreemptNS <= now {
+				// 如果P在运行中(_Prunning), 且经过了一次sysmon循环并且G运行时间超过forcePreemptNS(10ms), 则抢占这个P
 				preemptone(_p_)
 				// In case of syscall, preemptone() doesn't
 				// work, because there is no M wired to P.
+				// 在syscall的情况下，preemptone()不起作用，因为没有M与P相连。
 				sysretake = true
 			}
 		}
 		if s == _Psyscall {
 			// Retake P from syscall if it's there for more than 1 sysmon tick (at least 20us).
+			// 如果P在系统调用中(_Psyscall), 且经过了一次sysmon循环(20us~10ms), 则抢占这个P
 			t := int64(_p_.syscalltick)
 			if !sysretake && int64(pd.syscalltick) != t {
 				pd.syscalltick = uint32(t)
@@ -5429,15 +5439,21 @@ func retake(now int64) uint32 {
 			// On the one hand we don't want to retake Ps if there is no other work to do,
 			// but on the other hand we want to retake them eventually
 			// because they can prevent the sysmon thread from deep sleep.
+			// 一方面我们不想在没有其他工作的情况下重新获取 Ps，但另一方面我们希望最终重新获取它们，
+			// 因为它们可以防止 sysmon 线程深度睡眠。
+
 			if runqempty(_p_) && atomic.Load(&sched.nmspinning)+atomic.Load(&sched.npidle) > 0 && pd.syscallwhen+10*1000*1000 > now {
 				continue
 			}
 			// Drop allpLock so we can take sched.lock.
+			// 解锁
 			unlock(&allpLock)
 			// Need to decrement number of idle locked M's
 			// (pretending that one more is running) before the CAS.
 			// Otherwise the M from which we retake can exit the syscall,
 			// increment nmidle and report deadlock.
+			// 在CAS之前需要减少空闲锁定的M的数量（假装还有一个正在运行）。
+			// 否则，我们重新获取的M可以退出系统调用，递增nmidle并报告死锁。
 			incidlelocked(-1)
 			if atomic.Cas(&_p_.status, s, _Pidle) {
 				if trace.enabled {
@@ -5446,6 +5462,7 @@ func retake(now int64) uint32 {
 				}
 				n++
 				_p_.syscalltick++
+				// 调用handoffp解除M和P之间的关联
 				handoffp(_p_)
 			}
 			incidlelocked(1)
@@ -5484,6 +5501,8 @@ func preemptall() bool {
 // The actual preemption will happen at some point in the future
 // and will be indicated by the gp->status no longer being
 // Grunning
+//
+// 告诉P 在处理器上运行的 goroutine 应该停止。这个函数是纯粹的尽力而为。
 func preemptone(_p_ *p) bool {
 	mp := _p_.m.ptr()
 	if mp == nil || mp == getg().m {
@@ -5493,13 +5512,17 @@ func preemptone(_p_ *p) bool {
 	if gp == nil || gp == mp.g0 {
 		return false
 	}
-
+	// 设置g.preempt = true
 	gp.preempt = true
 
 	// Every call in a goroutine checks for stack overflow by
 	// comparing the current stack pointer to gp->stackguard0.
 	// Setting gp->stackguard0 to StackPreempt folds
 	// preemption into the normal stack overflow check.
+	//
+	// goroutine中的每个调用都会通过比较当前堆栈指针和gp->stackguard0来检查堆栈溢出。
+	// 将gp->stackguard0设置为StackPreempt，将抢占转换为正常的堆栈溢出检查。
+	// 设置g.stackguard0 = stackPreempt
 	gp.stackguard0 = stackPreempt
 
 	// Request an async preemption of this P.
@@ -5852,6 +5875,9 @@ func pidleget(now int64) (*p, int64) {
 
 // runqempty reports whether _p_ has no Gs on its local run queue.
 // It never returns true spuriously.
+//
+// 报告"_p_"在其本地运行队列中是不是没有 "G"。
+// 它不会虚假地返回true。
 func runqempty(_p_ *p) bool {
 	// Defend against a race where 1) _p_ has G1 in runqnext but runqhead == runqtail,
 	// 2) runqput on _p_ kicks G1 to the runq, 3) runqget on _p_ empties runqnext.
