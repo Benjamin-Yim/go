@@ -427,13 +427,13 @@ TEXT gogo<>(SB), NOSPLIT, $0
 TEXT runtime·mcall<ABIInternal>(SB), NOSPLIT, $0-8
 	MOVQ	AX, DX	// DX = fn
 
-	// save state in g->sched
+	// 会把当前的状态保存到g.sched. save state in g->sched
 	MOVQ	0(SP), BX	// caller's PC
 	MOVQ	BX, (g_sched+gobuf_pc)(R14)
 	LEAQ	fn+0(FP), BX	// caller's SP
 	MOVQ	BX, (g_sched+gobuf_sp)(R14)
 	MOVQ	BP, (g_sched+gobuf_bp)(R14)
-
+    // 然后切换到g0和g0的栈空间并执行指定的函数
 	// switch to m->g0 & its stack, call fn
 	MOVQ	g_m(R14), BX
 	MOVQ	m_g0(BX), SI	// SI = g.m.g0

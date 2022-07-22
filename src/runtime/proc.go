@@ -374,7 +374,9 @@ func goparkunlock(lock *mutex, reason waitReason, traceEv byte, traceskip int) {
 }
 
 func goready(gp *g, traceskip int) {
+	// 切换到g0调用ready函数, 调用完切换回来
 	systemstack(func() {
+		// 把G的状态由等待中(_Gwaiting)改为待运行(_Grunnable)
 		ready(gp, traceskip, true)
 	})
 }
@@ -852,20 +854,24 @@ func ready(gp *g, traceskip int, next bool) {
 	if trace.enabled {
 		traceGoUnpark(gp, traceskip)
 	}
-
+	// 获取当前 g 的状态
 	status := readgstatus(gp)
 
 	// Mark runnable.
 	_g_ := getg()
-	mp := acquirem() // disable preemption because it can be holding p in a local var
+
+	mp := acquirem() // 获取到一个 M  disable preemption because it can be holding p in a local var
 	if status&^_Gscan != _Gwaiting {
 		dumpgstatus(gp)
 		throw("bad g->status in ready")
 	}
 
 	// status is Gwaiting or Gscanwaiting, make Grunnable and put on runq
+	// 把G的状态由等待中(_Gwaiting)改为待运行(_Grunnable)
 	casgstatus(gp, _Gwaiting, _Grunnable)
+	// 把G放到P的本地运行队列
 	runqput(_g_.m.p.ptr(), gp, next)
+	// 唤醒流程。如果当前有空闲的P, 但是无自旋的M(nmspinning等于0), 则唤醒或新建一个M
 	wakep()
 	releasem(mp)
 }
@@ -3409,9 +3415,10 @@ func park_m(gp *g) {
 		traceGoPark(_g_.m.waittraceev, _g_.m.waittraceskip)
 	}
 
+	// park_m函数首先把G的状态从运行中(_Grunning)改为等待中(_Gwaiting)
 	casgstatus(gp, _Grunning, _Gwaiting)
+	// 然后调用dropg函数解除M和G之间的关联
 	dropg()
-
 	if fn := _g_.m.waitunlockf; fn != nil {
 		ok := fn(gp, _g_.m.waitlock)
 		_g_.m.waitunlockf = nil
@@ -3424,6 +3431,7 @@ func park_m(gp *g) {
 			execute(gp, true) // Schedule it back, never returns.
 		}
 	}
+	// 最后调用schedule函数继续调度
 	schedule()
 }
 
