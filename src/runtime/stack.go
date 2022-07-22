@@ -959,6 +959,16 @@ func round2(x int32) int32 {
 // stack growth from other nowritebarrierrec functions, but the
 // compiler doesn't check this.
 //
+// 当需要更多的堆栈时，从 "runtime-morestack "调用。
+// 分配更大的堆栈并重新定位到新的堆栈。
+// 对于固定摊销成本，堆栈增长是倍数增长的。
+//
+// "g->atomicstatus "在进入时将是Grunning或Gscanrunning。
+// 如果调度器试图停止这个g，那么它将设置preemptStop。
+//
+// 这必须是nowritebarrierrec，因为它可以作为堆栈增长的一部分从
+// 其他nowritebarrierrec函数中调用，但编译器并没有检查这一点。
+//
 //go:nowritebarrierrec
 func newstack() {
 	thisg := getg()
@@ -1021,9 +1031,12 @@ func newstack() {
 	// into a real deadlock.
 	preempt := stackguard0 == stackPreempt
 	if preempt {
+		// 判断是否可以抢占
 		if !canPreemptM(thisg.m) {
 			// Let the goroutine keep running for now.
 			// gp->preempt is set, so it will be preempted next time.
+			// 抢占失败, 因为g.preempt等于true, runtime中的一些代码会重
+			// 新设置stackPreempt以重试下一次的抢占
 			gp.stackguard0 = gp.stack.lo + _StackGuard
 			gogo(&gp.sched) // never return
 		}
@@ -1049,13 +1062,15 @@ func newstack() {
 	}
 
 	if preempt {
+		// g0 不参与抢占
 		if gp == thisg.m.g0 {
 			throw("runtime: preempt g0")
 		}
+		// 在系统调用的情况下不参与抢占
 		if thisg.m.p == 0 && thisg.m.locks == 0 {
 			throw("runtime: g is running but p is not")
 		}
-
+		// 判断是否由 GC 引起的
 		if gp.preemptShrink {
 			// We're at a synchronous safe point now, so
 			// do the pending stack shrink.
@@ -1066,7 +1081,7 @@ func newstack() {
 		if gp.preemptStop {
 			preemptPark(gp) // never returns
 		}
-
+		// 如果不是GC引起的则调用gopreempt_m函数完成抢占.
 		// Act like goroutine called runtime.Gosched.
 		gopreempt_m(gp) // never return
 	}

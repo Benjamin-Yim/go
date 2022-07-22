@@ -283,6 +283,11 @@ func resumeG(state suspendGState) {
 //
 // It is nosplit because it has nosplit callers.
 //
+// 1. mp.locks == 0。如果M被锁定(函数的本地变量中有P), 则跳过这一次的抢占并调用gogo函数继续运行G
+// 2. mp.mallocing == 0。 如果M正在分配内存, 则跳过这一次的抢占并调用gogo函数继续运行G
+// 3. mp.preemptoff == ""。 如果M设置了当前不能抢占, 则跳过这一次的抢占并调用gogo函数继续运行G
+// 4. mp.p.ptr().status == _Prunning。 如果M的状态不是运行中, 则跳过这一次的抢占并调用gogo函数继续运行G
+//
 //go:nosplit
 func canPreemptM(mp *m) bool {
 	return mp.locks == 0 && mp.mallocing == 0 && mp.preemptoff == "" && mp.p.ptr().status == _Prunning

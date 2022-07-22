@@ -464,7 +464,7 @@ type g struct {
 	// 如果需要抢占调度，设置preempt为true. 执行 stackguard0 = stackpreempt，
 	preempt       bool // preemption signal, duplicates stackguard0 = stackpreempt
 	preemptStop   bool // 将抢占标记修改为 _Gpreedmpted，如果修改失败则取消.transition to _Gpreempted on preemption; otherwise, just deschedule
-	preemptShrink bool // shrink stack at synchronous safe point
+	preemptShrink bool // 在同步安全点收缩堆栈.  shrink stack at synchronous safe point
 
 	// asyncSafePoint is set if g is stopped at an asynchronous
 	// safe point. This means there are frames on the stack
