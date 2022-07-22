@@ -406,7 +406,7 @@ TEXT runtime·gogo(SB), NOSPLIT, $0-8
 	JMP	gogo<>(SB)
 
 TEXT gogo<>(SB), NOSPLIT, $0
-	get_tls(CX)
+	get_tls(CX) // MOVQ TLS, CX
 	MOVQ	DX, g(CX)
 	MOVQ	DX, R14		// 设置TLS中的g为g.sched.g, 也就是g自身. set the g register
 	MOVQ	gobuf_sp(BX), SP	// 设置rsp寄存器为g.sched.rsp. restore SP
@@ -532,18 +532,18 @@ bad:
 // record an argument size. For that purpose, it has no arguments.
 TEXT runtime·morestack(SB),NOSPLIT,$0-0
 	// Cannot grow scheduler stack (m->g0).
-	get_tls(CX)
+	get_tls(CX) // MOVQ TLS, CX
 	MOVQ	g(CX), BX
 	MOVQ	g_m(BX), BX
-	MOVQ	m_g0(BX), SI
-	CMPQ	g(CX), SI
+	MOVQ	m_g0(BX), SI // 取出 g0
+	CMPQ	g(CX), SI // 当前 g 与 g0 比较
 	JNE	3(PC)
 	CALL	runtime·badmorestackg0(SB)
 	CALL	runtime·abort(SB)
 
 	// Cannot grow signal stack (m->gsignal).
-	MOVQ	m_gsignal(BX), SI
-	CMPQ	g(CX), SI
+	MOVQ	m_gsignal(BX), SI // m->gsignal 与 g0 比较
+	CMPQ	g(CX), SI // m->gsignal 与 当前 g 比较
 	JNE	3(PC)
 	CALL	runtime·badmorestackgsignal(SB)
 	CALL	runtime·abort(SB)
@@ -571,7 +571,7 @@ TEXT runtime·morestack(SB),NOSPLIT,$0-0
 	MOVQ	m_g0(BX), BX
 	MOVQ	BX, g(CX)
 	MOVQ	(g_sched+gobuf_sp)(BX), SP
-	CALL	runtime·newstack(SB)
+	CALL	runtime·newstack(SB) // 调用newstack函数
 	CALL	runtime·abort(SB)	// crash if newstack returns
 	RET
 

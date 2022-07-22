@@ -3433,12 +3433,15 @@ func goschedImpl(gp *g) {
 		dumpgstatus(gp)
 		throw("bad g status")
 	}
+	// 把G的状态由运行中(_Grunnable)改为待运行(_Grunnable)
 	casgstatus(gp, _Grunning, _Grunnable)
+	// 调用 dropg 函数解除M和G之间的关联
 	dropg()
 	lock(&sched.lock)
+	// 调用 globrunqput 把G放到全局运行队列
 	globrunqput(gp)
 	unlock(&sched.lock)
-
+	// 调用schedule函数继续调度
 	schedule()
 }
 
@@ -3463,6 +3466,7 @@ func goschedguarded_m(gp *g) {
 	goschedImpl(gp)
 }
 
+// gopreempt_m函数会调用goschedImpl函数
 func gopreempt_m(gp *g) {
 	if trace.enabled {
 		traceGoPreempt()
@@ -5520,9 +5524,11 @@ func preemptone(_p_ *p) bool {
 	// Setting gp->stackguard0 to StackPreempt folds
 	// preemption into the normal stack overflow check.
 	//
-	// goroutine中的每个调用都会通过比较当前堆栈指针和gp->stackguard0来检查堆栈溢出。
+	// goroutine 中的每个调用都通过将当前堆栈,如果不调用还会出发上下文检查么？
+	// 指针与 gp->stackguard0 进行比较来检查堆栈溢出。
 	// 将gp->stackguard0设置为StackPreempt，将抢占转换为正常的堆栈溢出检查。
 	// 设置g.stackguard0 = stackPreempt
+	// 运行中的 g 哪里出发检查栈扩张事件？
 	gp.stackguard0 = stackPreempt
 
 	// Request an async preemption of this P.
