@@ -559,7 +559,7 @@ TEXT runtime·morestack(SB),NOSPLIT,$0-0
 	MOVQ	g(CX), SI
 	MOVQ	SI, (m_morebuf+gobuf_g)(BX)
 
-	// Set g->sched to context in f.
+	// 保存G的状态到g.sched. Set g->sched to context in f.
 	MOVQ	0(SP), AX // f's PC
 	MOVQ	AX, (g_sched+gobuf_pc)(SI)
 	LEAQ	8(SP), AX // f's SP
@@ -577,8 +577,8 @@ TEXT runtime·morestack(SB),NOSPLIT,$0-0
 
 // morestack but not preserving ctxt.
 TEXT runtime·morestack_noctxt(SB),NOSPLIT,$0
-	MOVL	$0, DX
-	JMP	runtime·morestack(SB)
+	MOVL	$0, DX //   清空rdx寄存器
+	JMP	runtime·morestack(SB) // 调用morestack函数
 
 // spillArgs stores return values from registers to a *internal/abi.RegArgs in R12.
 TEXT ·spillArgs(SB),NOSPLIT,$0-0
