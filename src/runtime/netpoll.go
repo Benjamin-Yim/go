@@ -177,7 +177,7 @@ type pollCache struct {
 
 var (
 	netpollInitLock mutex
-	netpollInited   uint32
+	netpollInited   uint32 // netpoll 是否被初始化过？
 
 	pollcache      pollCache
 	netpollWaiters uint32
