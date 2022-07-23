@@ -2111,21 +2111,27 @@ var (
 // newmHandoff contains a list of m structures that need new OS threads.
 // This is used by newm in situations where newm itself can't safely
 // start an OS thread.
+// 这个 newmHandoff 负责并串联了所有新创建的 m：
+// newmHandoff 包含需要新 OS 线程的 m 的列表。
+// 在 newm 本身无法安全启动 OS 线程的情况下，newm 会使用它。
 var newmHandoff struct {
 	lock mutex
 
 	// newm points to a list of M structures that need new OS
 	// threads. The list is linked through m.schedlink.
+	// newm 指向需要新 OS 线程的M结构列表。 该列表通过 m.schedlink 链接。
 	newm muintptr
 
 	// waiting indicates that wake needs to be notified when an m
 	// is put on the list.
+	// waiting 表示当 m 列入列表时需要通知唤醒。
 	waiting bool
 	wake    note
 
 	// haveTemplateThread indicates that the templateThread has
 	// been started. This is not protected by lock. Use cas to set
 	// to 1.
+	// haveTemplateThread 表示 templateThread 已经启动。没有锁保护，使用 cas 设置为 1。
 	haveTemplateThread uint32
 }
 
@@ -2134,7 +2140,10 @@ var newmHandoff struct {
 // May run with m.p==nil, so write barriers are not allowed.
 //
 // id is optional pre-allocated m ID. Omit by passing -1.
-// 创建一个新的m。它将以调用fn开始，否则就是调用调度器。
+//
+// 创建一个新的 m. 它会启动并调用 fn 或调度器
+// fn 必须是静态、非堆上分配的闭包
+// 它可能在 m.p==nil 时运行，因此不允许 write barrier
 //
 //go:nowritebarrierrec
 func newm(fn func(), _p_ *p, id int64) {
@@ -2180,6 +2189,8 @@ func newm(fn func(), _p_ *p, id int64) {
 		newmHandoff.newm.set(mp)
 		if newmHandoff.waiting {
 			newmHandoff.waiting = false
+			// 唤醒 m, spinning -> non-spinning
+			// 唤醒模板线程
 			notewakeup(&newmHandoff.wake)
 		}
 		unlock(&newmHandoff.lock)
@@ -2251,6 +2262,14 @@ func startTemplateThread() {
 // templateThread runs on an M without a P, so it must not have write
 // barriers.
 //
+// templateThread是处于已知良好状态的线程，仅当调用线程可能不是良好状态时，
+// 该线程仅用于在已知良好状态下启动新线程。
+//
+// 许多程序不需要这个，所以当我们第一次进入可能导致在未知状态的线程上运行的状态时，
+// templateThread会懒启动。
+//
+// templateThread 在没有 P 的 M 上运行，因此它必须没有写障碍。
+//
 //go:nowritebarrierrec
 func templateThread() {
 	lock(&sched.lock)
@@ -2273,6 +2292,7 @@ func templateThread() {
 			lock(&newmHandoff.lock)
 		}
 		newmHandoff.waiting = true
+		// 等待新的创建请求
 		noteclear(&newmHandoff.wake)
 		unlock(&newmHandoff.lock)
 		notesleep(&newmHandoff.wake)
@@ -2492,6 +2512,9 @@ func wakep() {
 
 // Stops execution of the current m that is locked to a g until the g is runnable again.
 // Returns with acquired P.
+//
+// 停止当前正在执行锁住的 g 的 m 的执行，直到 g 重新变为 runnable。
+// 返回获得的 P
 func stoplockedm() {
 	_g_ := getg()
 
@@ -2500,11 +2523,13 @@ func stoplockedm() {
 	}
 	if _g_.m.p != 0 {
 		// Schedule another M to run this p.
+		// 调度其他 M 来运行此 P
 		_p_ := releasep()
 		handoffp(_p_)
 	}
 	incidlelocked(1)
 	// Wait until another thread schedules lockedg again.
+	// 等待直到其他线程可以再次调度 lockedg
 	mPark()
 	status := readgstatus(_g_.m.lockedg.ptr())
 	if status&^_Gscan != _Grunnable {
@@ -4251,7 +4276,7 @@ func malg(stacksize int32) *g {
 // The compiler turns a go statement into a call to this.
 func newproc(fn *funcval) {
 	//if gogetenv("GOLOG") == "true" {
-	println("新建一个协程，name:", fn.fn)
+	println("新建一个协程，name:", FuncForPC(fn.fn).Name())
 	//}
 	gp := getg()         // 获取当前待运行的G
 	pc := getcallerpc()  // 获取调用端的地址(返回地址)PC
@@ -4552,6 +4577,8 @@ func Breakpoint() {
 // after they modify m.locked. Do not allow preemption during this call,
 // or else the m might be different in this function than in the caller.
 //
+// 在此调用期间不允许抢占，否则此函数中的 m 可能与调用者中的 m 不同。
+//
 //go:nosplit
 func dolockOSThread() {
 	if GOARCH == "wasm" {
@@ -4578,11 +4605,16 @@ func dolockOSThread() {
 //
 // A goroutine should call LockOSThread before calling OS services or
 // non-Go library functions that depend on per-thread state.
+//
+// 如果模板线程尚未运行，则startTemplateThread将启动它
+// 调用线程本身必须处于已知良好状态。
 func LockOSThread() {
 	if atomic.Load(&newmHandoff.haveTemplateThread) == 0 && GOOS != "plan9" {
 		// If we need to start a new thread from the locked
 		// thread, we need the template thread. Start it now
 		// while we're in a known-good state.
+		// 如果我们需要从锁定的线程启动一个新线程，我们需要模板线程。
+		// 当我们处于一个已知良好的状态时，立即启动它。
 		startTemplateThread()
 	}
 	_g_ := getg()
@@ -4603,6 +4635,10 @@ func lockOSThread() {
 // dounlockOSThread is called by UnlockOSThread and unlockOSThread below
 // after they update m->locked. Do not allow preemption during this call,
 // or else the m might be in different in this function than in the caller.
+//
+// 在此调用期间不允许抢占，否则此函数中的 m 可能与调用者中的 m 不同。
+//
+// 并无特殊处理，只是简单的将 lockedg 和 lockedm 两个字段清零：
 //
 //go:nosplit
 func dounlockOSThread() {
@@ -4631,6 +4667,7 @@ func dounlockOSThread() {
 // other goroutines, it should not call this function and thus leave
 // the goroutine locked to the OS thread until the goroutine (and
 // hence the thread) exits.
+// Unlock 的部分非常简单，减少计数，再实际 dounlock：
 func UnlockOSThread() {
 	_g_ := getg()
 	if _g_.m.lockedExt == 0 {
