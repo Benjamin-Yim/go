@@ -822,8 +822,9 @@ func mcommoninit(mp *m, id int64) {
 	} else {
 		mp.fastrand = uint64(hi)<<32 | uint64(lo)
 	}
-
+	// 初始化 gsignal，用于处理 m 上的信号。
 	mpreinit(mp)
+	// gsignal 的运行栈边界处理
 	if mp.gsignal != nil {
 		mp.gsignal.stackguard1 = mp.gsignal.stack.lo + _StackGuard
 	}
@@ -2234,6 +2235,9 @@ func newm1(mp *m) {
 // startTemplateThread starts the template thread if it is not already
 // running.
 //
+// 如果模板线程尚未运行，则startTemplateThread将启动它。
+// 调用线程本身必须处于已知良好状态。
+//
 // The calling thread must itself be in a known-good state.
 func startTemplateThread() {
 	if GOARCH == "wasm" { // no threads on wasm yet
@@ -2243,6 +2247,8 @@ func startTemplateThread() {
 	// Disable preemption to guarantee that the template thread will be
 	// created before a park once haveTemplateThread is set.
 	mp := acquirem()
+	// 模板线程会在第一次调用 LockOSThread 的时候被创建，
+	// 并将 haveTemplateThread 标记为已经存在模板线程
 	if !atomic.Cas(&newmHandoff.haveTemplateThread, 0, 1) {
 		releasem(mp)
 		return
