@@ -136,6 +136,7 @@ func noteclear(n *note) {
 	n.key = 0
 }
 
+// notewakeup 唤醒 m, 自旋到非自旋
 func notewakeup(n *note) {
 	// 首先交换nmspinning到1, 成功再继续, 多个线程同时执行wakep函数只有一个会继续
 	old := atomic.Xchg(key32(&n.key), 1)

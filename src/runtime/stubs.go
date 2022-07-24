@@ -350,6 +350,25 @@ func publicationBarrier()
 // A general rule is that the result of getcallersp should be used
 // immediately and can only be passed to nosplit functions.
 
+// getcallerpc 返回它调用方的调用方程序计数器 PC program conter
+// getcallersp 返回它调用方的调用方的栈指针 SP stack pointer
+// 实现由编译器内建，在任何平台上都没有实现它的代码
+//
+// 例如:
+//
+//	func f(arg1, arg2, arg3 int) {
+//		pc := getcallerpc()
+//		sp := getcallersp()
+//	}
+//
+// 这两行会寻找调用 f 的 PC 和 SP
+//
+// 调用 getcallerpc 和 getcallersp 必须被询问的帧中完成
+//
+// getcallersp 的结果在返回时是正确的，但是它可能会被任何随后调用的函数无效，
+// 因为它可能会重新定位堆栈，以使其增长或缩小。一般规则是，getcallersp 的结果
+// 应该立即使用，并且只能传递给 nosplit 函数。
+//
 //go:noescape
 func getcallerpc() uintptr
 

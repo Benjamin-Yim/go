@@ -287,6 +287,8 @@ func (gp *guintptr) cas(old, new guintptr) bool {
 // setGNoWB performs *gp = new without a write barrier.
 // For times when it's impractical to use a guintptr.
 //
+// setGNoWB 当使用 guintptr 不可行时，在没有 write barrier 下执行 *gp = new
+//
 //go:nosplit
 //go:nowritebarrier
 func setGNoWB(gp **g, new *g) {
@@ -320,6 +322,8 @@ func (mp *muintptr) set(m *m) { *mp = muintptr(unsafe.Pointer(m)) }
 
 // setMNoWB performs *mp = new without a write barrier.
 // For times when it's impractical to use an muintptr.
+//
+// setMNoWB 当使用 muintptr 不可行时，在没有 write barrier 下执行 *mp = new
 //
 //go:nosplit
 //go:nowritebarrier
@@ -569,7 +573,7 @@ type m struct {
 	locks         int32
 	dying         int32
 	profilehz     int32
-	spinning      bool // spinning状态：表示当前工作线程正在试图从其它工作线程的本地运行队列偷取goroutine; 为false，休眠状态. m is out of work and is actively looking for work
+	spinning      bool // 表示自身的自旋和非自旋状态 spining. spinning状态：表示当前工作线程正在试图从其它工作线程的本地运行队列偷取goroutine; 为false，休眠状态. m is out of work and is actively looking for work
 	blocked       bool // m 被阻塞时为 true。m is blocked on a note
 	newSigstack   bool // 在一个C 线程被调用 sigaltstack. minit on C thread called sigaltstack
 	printlock     int8
@@ -860,7 +864,7 @@ type schedt struct {
 	// 系统goroutine的数量，自动更新
 	ngsys uint32 // number of system goroutines; updated atomically
 	// 由空闲的 p 结构体对象组成的链表
-	pidle      puintptr // idle p's
+	pidle      puintptr // 空闲 p 链表. idle p's
 	npidle     uint32   // n 个 p 处于空闲的状态
 	nmspinning uint32   // m 处理自旋的状态。 See "Worker thread parking/unparking" comment in proc.go.
 
@@ -882,11 +886,11 @@ type schedt struct {
 		n        int32  // length of runnable
 	}
 
-	// Global cache of dead G's.  有效 dead G 全局缓存
+	//有效的 dead 状态的 G 全局缓存. Global cache of dead G's.
 	gFree struct {
 		lock    mutex
-		stack   gList // Gs with stacks
-		noStack gList // Gs without stacks
+		stack   gList // 包含栈的 Gs。Gs with stacks
+		noStack gList // 没有栈的 Gs。Gs without stacks
 		n       int32
 	}
 
