@@ -2596,7 +2596,6 @@ func findRunnable() (gp *g, inheritTime, tryWakeP bool) {
 	// The conditions here and in handoffp must agree: if
 	// findrunnable would return a G to run, handoffp must start
 	// an M.
-
 top:
 	_p_ := _g_.m.p.ptr()
 	if sched.gcwaiting != 0 { // 判断是否需要 GC 等待，如果需要就调回循环
@@ -4174,7 +4173,8 @@ func malg(stacksize int32) *g {
 // The compiler turns a go statement into a call to this.
 func newproc(fn *funcval) {
 	//if gogetenv("GOLOG") == "true" {
-	println("新建一个协程，name:", fn.fn)
+
+	println("新建一个协程，name:", FuncForPC(fn.fn).Name())
 	//}
 	gp := getg()         // 获取当前待运行的G
 	pc := getcallerpc()  // 获取调用端的地址(返回地址)PC
@@ -5250,16 +5250,19 @@ func sysmon() {
 	lasttrace := int64(0)
 	idle := 0 // how many cycles in succession we had not wokeup somebody
 	delay := uint32(0)
-
+	println("开始调度循环")
 	for {
 		// 每隔 20us~10ms 轮询执行一次
 		if idle == 0 { // start with 20us sleep... 一开始是 20us
 			delay = 20
+			//println("周期在 20us")
 		} else if idle > 50 { // start doubling the sleep after 1ms... 然后 1ms
 			delay *= 2
+			//println("周期在 ", delay, "us")
 		}
 		if delay > 10*1000 { // up to 10ms  最终是 10ms
 			delay = 10 * 1000
+			println("周期在 10ms")
 		}
 		usleep(delay)
 
