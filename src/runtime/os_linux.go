@@ -441,6 +441,8 @@ func timer_delete(timerid int32) int32
 //go:noescape
 func rtsigprocmask(how int32, new, old *sigset, size int32)
 
+// sigprocmask 的本质为系统调用，其返回值通过 old 交付给调用者
+//
 //go:nosplit
 //go:nowritebarrierrec
 func sigprocmask(how int32, new, old *sigset) {

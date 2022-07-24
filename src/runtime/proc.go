@@ -708,6 +708,7 @@ func schedinit() {
 	stkobjinit()           // must run before GC starts
 
 	sigsave(&_g_.m.sigmask)
+	// initSigmask 目标旨在记录主线程 M0 创建之初的屏蔽字 sigmask
 	initSigmask = _g_.m.sigmask
 
 	if offset := unsafe.Offsetof(sched.timeToRun); offset%8 != 0 {
@@ -1467,6 +1468,9 @@ func mstartm0() {
 	// Create an extra M for callbacks on threads not created by Go.
 	// An extra M is also needed on Windows for callbacks created by
 	// syscall.NewCallback. See issue #6751 for details.
+	//
+	// 创建一个额外的 M 服务 non-Go 线程（cgo 调用中产生的线程）的回调，并且只创建一个
+	// windows 上也需要额外 M 来服务 syscall.NewCallback 产生的回调，见 issue #6751
 	if (iscgo || GOOS == "windows") && !cgoHasExtraM {
 		cgoHasExtraM = true
 		newextram()
@@ -1930,6 +1934,10 @@ var earlycgocallback = []byte("fatal error: cgo callback before cgo call\n")
 // newextram allocates m's and puts them on the extra list.
 // It is called with a working local m, so that it can do things
 // like call schedlock and allocate.
+//
+// 辅 M 是一个用于服务非 Go 线程（cgo 产生的线程）回调的 M
+// newextram 分配一个 m 并将其放入 extra 列表中
+// 它会被工作中的本地 m 调用，因此它能够做一些调用 schedlock 和 allocate 类似的事情。
 func newextram() {
 	c := atomic.Xchg(&extraMWaiters, 0)
 	if c > 0 {
@@ -1938,6 +1946,7 @@ func newextram() {
 		}
 	} else {
 		// Make sure there is at least one extra M.
+		// 确保至少有一个额外的 M
 		mp := lockextra(true)
 		unlockextra(mp)
 		if mp == nil {
@@ -1947,6 +1956,7 @@ func newextram() {
 }
 
 // oneNewExtraM allocates an m and puts it on the extra list.
+// onNewExtraM 分配一个 m 并将其放入 extra list 中
 func oneNewExtraM() {
 	// Create extra goroutine locked to extra m.
 	// The goroutine is the context in which the cgo callback will run.
@@ -1978,6 +1988,7 @@ func oneNewExtraM() {
 		gp.racectx = racegostart(abi.FuncPCABIInternal(newextram) + sys.PCQuantum)
 	}
 	// put on allg for garbage collector
+	// 给垃圾回收器使用
 	allgadd(gp)
 
 	// gp is now on the allg list, but we don't want it to be
@@ -1987,6 +1998,7 @@ func oneNewExtraM() {
 	atomic.Xadd(&sched.ngsys, +1)
 
 	// Add m to the extra list.
+	// 将 m 添加到 extra m 链表中
 	mnext := lockextra(true)
 	mp.schedlink.set(mnext)
 	extraMCount++
@@ -4260,9 +4272,12 @@ func syscall_runtime_AfterExec() {
 }
 
 // Allocate a new g, with a stack big enough for stacksize bytes.
+// 分配一个新的 g 结构, 包含一个 stacksize 字节的的栈
 func malg(stacksize int32) *g {
 	newg := new(g) // 新建一个 g
 	if stacksize >= 0 {
+		// 将 stacksize 舍入为 2 的指数，目的是为了消除 _StackSystem 对栈的影响
+		// 在 Linux/Darwin 上（ _StackSystem == 0 ）本行不改变 stacksize 的大小
 		stacksize = round2(_StackSystem + stacksize) // 分配 2kb 栈
 		systemstack(func() {
 			newg.stack = stackalloc(uint32(stacksize)) // 正式分配栈

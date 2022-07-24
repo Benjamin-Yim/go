@@ -531,35 +531,35 @@ bad:
 // calling the scheduler calling newm calling gc), so we must
 // record an argument size. For that purpose, it has no arguments.
 TEXT runtime·morestack(SB),NOSPLIT,$0-0
-	// Cannot grow scheduler stack (m->g0).
+	// 无法增长调度器的栈(m->g0)
 	get_tls(CX) // MOVQ TLS, CX
 	MOVQ	g(CX), BX
 	MOVQ	g_m(BX), BX
 	MOVQ	m_g0(BX), SI // 取出 g0
 	CMPQ	g(CX), SI // 当前 g 与 g0 比较
-	JNE	3(PC)
+	JNE	3(PC) // 不为 0 说明是 g0
 	CALL	runtime·badmorestackg0(SB)
 	CALL	runtime·abort(SB)
 
-	// Cannot grow signal stack (m->gsignal).
+	// 无法增长信号栈 (m->gsignal)
 	MOVQ	m_gsignal(BX), SI // m->gsignal 与 g0 比较
 	CMPQ	g(CX), SI // m->gsignal 与 当前 g 比较
 	JNE	3(PC)
 	CALL	runtime·badmorestackgsignal(SB)
 	CALL	runtime·abort(SB)
 
-	// Called from f.
-	// Set m->morebuf to f's caller.
+	// 从 f 调用。Called from f.
+	// 将 m->morebuf 设置为 f 的调用方。Set m->morebuf to f's caller.
 	NOP	SP	// tell vet SP changed - stop checking offsets
-	MOVQ	8(SP), AX	// f's caller's PC
+	MOVQ	8(SP), AX	// f 的调用方 PC。f's caller's PC
 	MOVQ	AX, (m_morebuf+gobuf_pc)(BX)
-	LEAQ	16(SP), AX	// f's caller's SP
+	LEAQ	16(SP), AX	// f 的调用方 SP。f's caller's SP
 	MOVQ	AX, (m_morebuf+gobuf_sp)(BX)
 	get_tls(CX)
 	MOVQ	g(CX), SI
 	MOVQ	SI, (m_morebuf+gobuf_g)(BX)
 
-	// 保存G的状态到g.sched. Set g->sched to context in f.
+	// 保存G的状态到g.sched. 将 g->sched 设置为 f 的上下文。Set g->sched to context in f.
 	MOVQ	0(SP), AX // f's PC
 	MOVQ	AX, (g_sched+gobuf_pc)(SI)
 	LEAQ	8(SP), AX // f's SP
@@ -567,7 +567,7 @@ TEXT runtime·morestack(SB),NOSPLIT,$0-0
 	MOVQ	BP, (g_sched+gobuf_bp)(SI)
 	MOVQ	DX, (g_sched+gobuf_ctxt)(SI)
 
-	// Call newstack on m->g0's stack.
+	//  在 m->g0 栈上调用 newstack. Call newstack on m->g0's stack.
 	MOVQ	m_g0(BX), BX
 	MOVQ	BX, g(CX)
 	MOVQ	(g_sched+gobuf_sp)(BX), SP

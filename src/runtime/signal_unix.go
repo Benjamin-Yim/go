@@ -622,6 +622,7 @@ func sighandler(sig uint32, info *siginfo, ctxt unsafe.Pointer, gp *g) {
 	// adjustSignalStack).
 	delayedSignal := *cgo_yield != nil && mp != nil && _g_.stack == mp.g0.stack
 
+	// profile 时钟超时
 	if sig == _SIGPROF {
 		// Some platforms (Linux) have per-thread timers, which we use in
 		// combination with the process-wide timer. Avoid double-counting.
@@ -631,6 +632,7 @@ func sighandler(sig uint32, info *siginfo, ctxt unsafe.Pointer, gp *g) {
 		return
 	}
 
+	// 用户信号
 	if sig == _SIGTRAP && testSigtrap != nil && testSigtrap(info, (*sigctxt)(noescape(unsafe.Pointer(c))), gp) {
 		return
 	}
@@ -648,18 +650,22 @@ func sighandler(sig uint32, info *siginfo, ctxt unsafe.Pointer, gp *g) {
 		return
 	}
 
+	// 可能是一个抢占信号
 	if sig == sigPreempt && debug.asyncpreemptoff == 0 && !delayedSignal {
 		// Might be a preemption signal.
 		doSigPreempt(gp, c)
 		// Even if this was definitely a preemption signal, it
 		// may have been coalesced with another signal, so we
 		// still let it through to the application.
+		// 即便这是一个抢占信号，它也可能与其他信号进行混合，因此我们
+		// 继续进行处理。
 	}
 
 	flags := int32(_SigThrow)
 	if sig < uint32(len(sigtable)) {
 		flags = sigtable[sig].flags
 	}
+	// 我们无法安全的 sigpanic 因为它可能造成栈的增长，因此忽略它
 	if c.sigcode() != _SI_USER && flags&_SigPanic != 0 && gp.throwsplit {
 		// We can't safely sigpanic because it may grow the
 		// stack. Abort in the signal handler instead.
@@ -670,6 +676,7 @@ func sighandler(sig uint32, info *siginfo, ctxt unsafe.Pointer, gp *g) {
 		// causes a memory fault. Don't turn that into a panic.
 		flags = _SigThrow
 	}
+	// 产生 panic 的信号
 	if c.sigcode() != _SI_USER && flags&_SigPanic != 0 {
 		// The signal is going to cause a panic.
 		// Arrange the stack so that it looks like the point
@@ -687,17 +694,17 @@ func sighandler(sig uint32, info *siginfo, ctxt unsafe.Pointer, gp *g) {
 		c.preparePanic(sig, gp)
 		return
 	}
-
+	// 对用户注册的信号进行转发
 	if c.sigcode() == _SI_USER || flags&_SigNotify != 0 {
 		if sigsend(sig) {
 			return
 		}
 	}
-
+	// 设置为可忽略的用户信号
 	if c.sigcode() == _SI_USER && signal_ignored(sig) {
 		return
 	}
-
+	// 非 THROW，返回
 	if flags&_SigKill != 0 {
 		dieFromSignal(sig)
 	}
@@ -1134,9 +1141,13 @@ func sigfwdgo(sig uint32, info *siginfo, ctx unsafe.Pointer) bool {
 // This is nosplit and nowritebarrierrec because it is called by needm
 // which may be called on a non-Go thread with no g available.
 //
+// sigsave 通过 sigprocmask 这个系统调用将当前 m0 的屏蔽字保存到 mp.sigmask 上
+// sigprocmask 的本质为系统调用，其返回值通过 old 交付给调用者：
+//
 //go:nosplit
 //go:nowritebarrierrec
 func sigsave(p *sigset) {
+	// sigprocmask 的本质为系统调用，其返回值通过 old 交付给调用者：
 	sigprocmask(_SIG_SETMASK, nil, p)
 }
 
@@ -1206,14 +1217,25 @@ func minitSignals() {
 // signal stack to the gsignal stack if cgo is not used (regardless
 // of whether it is already set). Record which choice was made in
 // newSigstack, so that it can be undone in unminit.
+//
+// 如果没有为线程设置备用信号栈（正常情况），则将备用信号栈设置为 gsignal 栈。
+// 如果为线程设置了备用信号栈（非 Go 线程设置备用信号栈然后调用 Go 函数的情况），
+// 则将 gsignal 栈设置为备用信号栈。
+// 如果没有使用 cgo 我们还设置了额外的 gsignal 信号栈（无论其是否已经被设置）
+// 记录在 newSigstack 中做出的选择，
+// 以便可以在 unminit 中撤消。
 func minitSignalStack() {
 	_g_ := getg()
+	// 获取原有的信号栈
 	var st stackt
 	sigaltstack(nil, &st)
 	if st.ss_flags&_SS_DISABLE != 0 || !iscgo {
+		// 如果禁用了当前的信号栈
+		// 则将 gsignal 的执行栈设置为备用信号栈
 		signalstack(&_g_.m.gsignal.stack)
 		_g_.m.newSigstack = true
 	} else {
+		// 否则将 m 的 gsignal 栈设置为从 sigaltstack 返回的备用信号栈
 		setGsignalStack(&st, &_g_.m.goSigStack)
 		_g_.m.newSigstack = false
 	}
@@ -1229,11 +1251,15 @@ func minitSignalStack() {
 // After this is called the thread can receive signals.
 func minitSignalMask() {
 	nmask := getg().m.sigmask
+	// 遍历整个信号表
 	for i := range sigtable {
+		// 判断某个信号是否为不可阻止的信号，
+		// 如果是不可阻止的信号，则删除对应的屏蔽字所在位
 		if !blockableSig(uint32(i)) {
 			sigdelset(&nmask, i)
 		}
 	}
+	// 重新设置屏蔽字
 	sigprocmask(_SIG_SETMASK, &nmask, nil)
 }
 
@@ -1265,6 +1291,11 @@ func unminitSignals() {
 // for all running threads to block them and delay their delivery until
 // we start a new thread. When linked into a C program we let the C code
 // decide on the disposition of those signals.
+//
+// 判断某个信号是否为不可阻止的信号
+// 1. 当信号是非阻塞信号，则不可阻止
+// 2. 当改程序为模块时，则可阻止
+// 3. 当信号为 Kill 或 Throw 时，可阻止，否则不可阻止
 func blockableSig(sig uint32) bool {
 	flags := sigtable[sig].flags
 	if flags&_SigUnblock != 0 {
@@ -1293,6 +1324,10 @@ type gsignalStack struct {
 // It saves the old values in *old for use by restoreGsignalStack.
 // This is used when handling a signal if non-Go code has set the
 // alternate signal stack.
+//
+// setGsignalStack 将当前 m 的 gsignal 栈设置为从 sigaltstack 系统调用返回的备用信号堆栈。
+// 它将旧值保存在 *old 中以供 restoreGsignalStack 使用。
+// 如果非 Go 代码设置了，则在处理信号时使用备用栈。
 //
 //go:nosplit
 //go:nowritebarrierrec
@@ -1325,6 +1360,8 @@ func restoreGsignalStack(st *gsignalStack) {
 }
 
 // signalstack sets the current thread's alternate signal stack to s.
+//
+// 将 s 设置为备用信号栈，此方法仅在信号栈被禁用时调用
 //
 //go:nosplit
 func signalstack(s *stack) {
