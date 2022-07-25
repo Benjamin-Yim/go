@@ -247,7 +247,9 @@ func main() {
 		// has a main, but it is not executed.
 		return
 	}
-	println("// 去运行 main 函数")
+	if debugSource {
+		println("// 去运行 main 函数")
+	}
 	fn := main_main // 调用main.main函数. make an indirect call, as the linker doesn't know the address of the main package when laying down the runtime
 	fn()
 	if raceenabled {
@@ -1279,10 +1281,15 @@ func stopTheWorldWithSema() {
 }
 
 func startTheWorldWithSema(emitTraceEvent bool) int64 {
+	if debugSource {
+		emitTraceEvent = true
+	}
 	assertWorldStopped()
-
 	mp := acquirem() // disable preemption because it can be holding p in a local var
 	if netpollinited() {
+		if debugSource {
+			println("调用 netpoll 来自 startTheWorldWithSema")
+		}
 		list := netpoll(0) // non-blocking
 		injectglist(&list)
 	}
@@ -1380,10 +1387,10 @@ func mstart0() {
 	_g_ := getg()
 	// 判断当前 g 是否分配过栈空间
 	osStack := _g_.stack.lo == 0
-	//if _g_.m.id == 0 {
-	//println("Main 正式启动")
-	//print("m0.g", _g_.goid, "\n")
-	//}
+	if debugSource && _g_.m.id == 0 {
+		println("Main 正式启动")
+		print("m0.g", _g_.goid, "\n")
+	}
 	if osStack {
 		// 没有分配过
 		//
@@ -2769,6 +2776,9 @@ top:
 	// 如果有任何类型的逻辑竞争与被阻塞的线程（例如它已经从 netpoll 返回，但尚未设置 lastpoll）
 	// 该线程无论如何都将阻塞 netpoll。
 	if netpollinited() && atomic.Load(&netpollWaiters) > 0 && atomic.Load64(&sched.lastpoll) != 0 {
+		if debugSource {
+			println("调用 netpoll 来自 findRunnable")
+		}
 		if list := netpoll(0); !list.empty() { // non-blocking
 			gp := list.pop()
 			injectglist(&list)
@@ -2996,6 +3006,10 @@ top:
 		if faketime != 0 {
 			// When using fake time, just poll.
 			delay = 0
+		}
+
+		if debugSource {
+			println("调用 netpoll 来自 findRunnable2")
 		}
 		list := netpoll(delay) // // 阻塞到新的 work 有效为止。block until new work is available
 		atomic.Store64(&sched.pollUntil, 0)
@@ -4305,18 +4319,18 @@ func malg(stacksize int32) *g {
 // Put it on the queue of g's waiting to run.
 // The compiler turns a go statement into a call to this.
 func newproc(fn *funcval) {
-	//if gogetenv("GOLOG") == "true" {
-	println("新建一个协程，name:", FuncForPC(fn.fn).Name())
-	//}
+	if debugSource {
+		println("新建一个协程，name:", FuncForPC(fn.fn).Name())
+	}
 	gp := getg()         // 获取当前待运行的G
 	pc := getcallerpc()  // 获取调用端的地址(返回地址)PC
 	systemstack(func() { // 切换当前的g到g0,并且使用g0的栈空间, 然后调用传入的函数
 		newg := newproc1(fn, gp, pc) // g0 开始调度
 
 		_p_ := getg().m.p.ptr()
-		//if gogetenv("GOLOG") == "true" {
-		print("g", newg.goid, "进入运行队列\n")
-		//}
+		if debugSource {
+			print("g", newg.goid, "进入运行队列\n")
+		}
 		// 调用runqput把g放到运行队列
 		runqput(_p_, newg, true) // 非公平抢占运行
 		// 如果主函数已经启动，就开始唤醒调度
@@ -5440,18 +5454,24 @@ func sysmon() {
 	lasttrace := int64(0)
 	idle := 0 // 连续 idle 个周期没有发生调度。how many cycles in succession we had not wokeup somebody
 	delay := uint32(0)
-	println("开始调度循环")
+	if debugSource {
+		println("开始调度循环")
+	}
 	for {
 		// 每隔 20us~10ms 轮询执行一次
 		if idle == 0 { // idel 小于 50 时设置 20us. start with 20us sleep...
 			delay = 20
 		} else if idle > 50 { // idel 大于 50 的时候设置为双倍增长。start doubling the sleep after 1ms...
 			delay *= 2
-			//println("周期在 ", delay, "us")
+			if debugSource {
+				println("周期在 ", delay, "us")
+			}
 		}
 		if delay > 10*1000 { // 延迟上限最终是 10ms。 up to 10ms
 			delay = 10 * 1000
-			println("周期在 10ms")
+			if debugSource {
+				println("周期在 10ms")
+			}
 		}
 		usleep(delay)
 
@@ -5521,6 +5541,9 @@ func sysmon() {
 		lastpoll := int64(atomic.Load64(&sched.lastpoll))
 		if netpollinited() && lastpoll != 0 && lastpoll+10*1000*1000 < now {
 			atomic.Cas64(&sched.lastpoll, uint64(lastpoll), uint64(now))
+			if debugSource {
+				println("调用 netpoll 来自 sysmon")
+			}
 			list := netpoll(0) // non-blocking - returns list of goroutines
 			if !list.empty() {
 				// Need to decrement number of idle locked M's
@@ -5579,7 +5602,12 @@ func sysmon() {
 		}
 		if debug.schedtrace > 0 && lasttrace+int64(debug.schedtrace)*1000000 <= now {
 			lasttrace = now
-			schedtrace(debug.scheddetail > 0)
+			if debugSource {
+				schedtrace(true)
+			} else {
+				schedtrace(debug.scheddetail > 0)
+			}
+
 		}
 		unlock(&sched.sysmonlock)
 	}

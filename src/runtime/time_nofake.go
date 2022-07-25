@@ -19,6 +19,11 @@ func nanotime() int64 {
 	return nanotime1()
 }
 
+//go:nosplit
+func millisecond() int {
+	return int(nanotime1() / 1e6)
+}
+
 var overrideWrite func(fd uintptr, p unsafe.Pointer, n int32) int32
 
 // write must be nosplit on Windows (see write1)

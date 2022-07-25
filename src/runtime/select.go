@@ -12,8 +12,6 @@ import (
 	"unsafe"
 )
 
-const debugSelect = false
-
 // Select case descriptor.
 // Known to compiler.
 // Changes here must also be made in src/cmd/compile/internal/walk/select.go's scasetype.
