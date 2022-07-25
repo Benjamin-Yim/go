@@ -1054,6 +1054,7 @@ func newstack() {
 	// NOTE: stackguard0 may change underfoot, if another thread
 	// is about to try to preempt gp. Read it just once and use that same
 	// value now and below.
+	// 如果是发起的抢占请求而非真正的栈分段
 	stackguard0 := atomic.Loaduintptr(&gp.stackguard0)
 
 	// Be conservative about where we preempt.
@@ -1069,6 +1070,8 @@ func newstack() {
 	// it needs a lock held by the goroutine), that small preemption turns
 	// into a real deadlock.
 	preempt := stackguard0 == stackPreempt
+	// 保守的对用户态代码进行抢占，而非抢占运行时代码
+	// 如果正持有锁、分配内存或抢占被禁用，则不发生抢占
 	if preempt {
 		// 判断是否可以抢占
 		if !canPreemptM(thisg.m) {
@@ -1077,6 +1080,7 @@ func newstack() {
 			// 抢占失败, 因为g.preempt等于true, runtime中的一些代码会重
 			// 新设置stackPreempt以重试下一次的抢占
 			gp.stackguard0 = gp.stack.lo + _StackGuard
+			// 重新进入调度循环
 			gogo(&gp.sched) // never return
 		}
 	}
@@ -1100,7 +1104,7 @@ func newstack() {
 		print("runtime: split stack overflow: ", hex(sp), " < ", hex(gp.stack.lo), "\n")
 		throw("runtime: split stack overflow")
 	}
-
+	// 如果需要对栈进行调整
 	if preempt {
 		// g0 不参与抢占
 		if gp == thisg.m.g0 {
@@ -1119,10 +1123,12 @@ func newstack() {
 		}
 
 		if gp.preemptStop {
+			// 永不返回
 			preemptPark(gp) // never returns
 		}
 		// 如果不是GC引起的则调用gopreempt_m函数完成抢占.
 		// Act like goroutine called runtime.Gosched.
+		// 重新进入调度循环
 		gopreempt_m(gp) // never return
 	}
 

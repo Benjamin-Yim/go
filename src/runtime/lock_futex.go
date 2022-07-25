@@ -245,4 +245,5 @@ func beforeIdle(int64, int64) (*g, bool) {
 	return nil, false
 }
 
+// checkTimeouts 恢复那些在等待一个 note 且已经触发其 deadline 时的 Goroutine。
 func checkTimeouts() {}

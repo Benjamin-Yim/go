@@ -317,6 +317,9 @@ func forcegchelper() {
 
 // Gosched yields the processor, allowing other goroutines to run. It does not
 // suspend the current goroutine, so execution resumes automatically.
+//
+// Gosched 会让出当前的 P，并允许其他 Goroutine 运行。
+// 它不会推迟当前的 Goroutine，因此执行会被自动恢复
 func Gosched() {
 	checkTimeouts()
 	mcall(gosched_m)
@@ -854,6 +857,7 @@ func fastrandinit() {
 }
 
 // Mark gp ready to run.
+// 将 gp 标记为 ready 来运行
 func ready(gp *g, traceskip int, next bool) {
 	if trace.enabled {
 		traceGoUnpark(gp, traceskip)
@@ -862,6 +866,7 @@ func ready(gp *g, traceskip int, next bool) {
 	status := readgstatus(gp)
 
 	// Mark runnable.
+	// 标记为 runnable.
 	_g_ := getg()
 
 	mp := acquirem() // 获取到一个 M  disable preemption because it can be holding p in a local var
@@ -3550,6 +3555,7 @@ func park_m(gp *g) {
 }
 
 func goschedImpl(gp *g) {
+	// 放弃当前 g 的运行状态
 	status := readgstatus(gp)
 	if status&^_Gscan != _Grunning {
 		dumpgstatus(gp)
@@ -3559,6 +3565,7 @@ func goschedImpl(gp *g) {
 	casgstatus(gp, _Grunning, _Grunnable)
 	// 调用 dropg 函数解除M和G之间的关联
 	dropg()
+	// 并将 g 放回全局队列中
 	lock(&sched.lock)
 	// 调用 globrunqput 把G放到全局运行队列
 	globrunqput(gp)
@@ -3568,6 +3575,7 @@ func goschedImpl(gp *g) {
 }
 
 // Gosched continuation on g0.
+// Gosched 在 g0 上继续执行
 func gosched_m(gp *g) {
 	if trace.enabled {
 		traceGoSched()
@@ -3589,6 +3597,7 @@ func goschedguarded_m(gp *g) {
 }
 
 // gopreempt_m函数会调用goschedImpl函数
+// 与 gosched_m 一致
 func gopreempt_m(gp *g) {
 	if trace.enabled {
 		traceGoPreempt()
@@ -5615,6 +5624,9 @@ func retake(now int64) uint32 {
 				pd.schedwhen = now
 			} else if pd.schedwhen+forcePreemptNS <= now {
 				// 如果P在运行中(_Prunning), 且经过了一次sysmon循环并且G运行时间超过forcePreemptNS(10ms), 则抢占这个P
+
+				// 对于 syscall 的情况，因为 M 没有与 P 绑定，
+				// preemptone() 不工作
 				preemptone(_p_)
 				// In case of syscall, preemptone() doesn't
 				// work, because there is no M wired to P.
@@ -5700,6 +5712,7 @@ func preemptall() bool {
 // 告诉P 在处理器上运行的 goroutine 应该停止。这个函数是纯粹的尽力而为。
 func preemptone(_p_ *p) bool {
 	mp := _p_.m.ptr()
+	// 检查 M 与 P 是否绑定
 	if mp == nil || mp == getg().m {
 		return false
 	}
@@ -5723,6 +5736,7 @@ func preemptone(_p_ *p) bool {
 	gp.stackguard0 = stackPreempt
 
 	// Request an async preemption of this P.
+	// 请求该 P 的异步抢占
 	if preemptMSupported && debug.asyncpreemptoff == 0 {
 		_p_.preempt = true
 		preemptM(mp)

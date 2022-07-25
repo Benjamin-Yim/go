@@ -3,6 +3,7 @@
 #include "go_asm.h"
 #include "textflag.h"
 
+// M2 修改执行的上下文，并恢复到修改后的位置
 TEXT ·asyncPreempt(SB),NOSPLIT|NOFRAME,$0-0
 	PUSHFL
 	ADJSP $156
