@@ -4,6 +4,7 @@
 
 #include "textflag.h"
 
+// 入口
 TEXT _rt0_amd64_darwin(SB),NOSPLIT,$-8
 	JMP	_rt0_amd64(SB)
 

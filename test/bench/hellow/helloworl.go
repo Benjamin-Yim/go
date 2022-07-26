@@ -7,18 +7,24 @@ import (
 )
 
 func main() {
-	dial, err := net.DialTimeout("tcp", "192.168.123.128:9090", 100*time.Second)
-	if err != nil {
-		panic(err)
-	}
-	println("connect ok")
-	var buffer []byte
-	for {
-		if bs, e := dial.Read(buffer); e == nil || bs > 0 {
-			fmt.Println(string(buffer))
+	go func() {
+		dial, err := net.DialTimeout("tcp", "192.168.123.128:9090", 100*time.Second)
+		if err != nil {
+			panic(err)
 		}
-		dial.Write([]byte("Ping"))
-		time.Sleep(5 * time.Second)
-	}
-
+		println("connect ok")
+		var buffer []byte
+		for {
+			if bs, e := dial.Read(buffer); e == nil || bs > 0 {
+				fmt.Println(string(buffer))
+			}
+			dial.Write([]byte("Ping"))
+			time.Sleep(5 * time.Second)
+		}
+	}()
+	go func() {
+		fmt.Println("Hello World")
+	}()
+	fmt.Println("Hello World")
+	select {}
 }

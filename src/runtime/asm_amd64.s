@@ -12,6 +12,7 @@
 // internal linking. This is the entry point for the program from the
 // kernel for an ordinary -buildmode=exe program. The stack holds the
 // number of arguments and the C-style argv.
+// 入口
 TEXT _rt0_amd64(SB),NOSPLIT,$-8
 	MOVQ	0(SP), DI	// argc
 	LEAQ	8(SP), SI	// argv
@@ -167,15 +168,15 @@ TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 
 	// create istack out of the given (operating system) stack.
 	// _cgo_init may update stackguard.
-	MOVQ	$runtime·g0(SB), DI
+	MOVQ	$runtime·g0(SB), DI // 将 g0 地址放到 DI 寄存器
 	LEAQ	(-64*1024+104)(SP), BX
 	MOVQ	BX, g_stackguard0(DI) // 更新g0中的stackguard的值, stackguard用于检测栈空间是否不足, 需要分配新的栈空间
 	MOVQ	BX, g_stackguard1(DI)
-	MOVQ	BX, (g_stack+stack_lo)(DI)
+	MOVQ	BX, (g_stack+stack_lo)(DI) // 更新 g0 的栈  g0.g_stackguard0 = g0.g_stackguard1 = g0.stack_lo
 	MOVQ	SP, (g_stack+stack_hi)(DI)
 
 	// find out information about the processor we're on
-	MOVL	$0, AX
+	MOVL	$0, AX          // rax 置0
 	CPUID // 获取当前cpu的信息并保存到各个全局变量
 	CMPL	AX, $0
 	JE	nocpuinfo

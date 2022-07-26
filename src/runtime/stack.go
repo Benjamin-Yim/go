@@ -155,6 +155,7 @@ const (
 //	order = log_2(size/FixedStack)
 //
 // There is a free list for each order.
+// 正常小栈栈池
 var stackpool [_NumStackOrders]struct {
 	item stackpoolItem
 	_    [cpu.CacheLinePadSize - unsafe.Sizeof(stackpoolItem{})%cpu.CacheLinePadSize]byte
@@ -167,6 +168,7 @@ type stackpoolItem struct {
 }
 
 // Global pool of large stack spans.
+// 全局 span 大栈的栈池
 var stackLarge struct {
 	lock mutex
 	free [heapAddrBits - pageShift]mSpanList // free lists by log_2(s.npages)
