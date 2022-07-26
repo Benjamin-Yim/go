@@ -8,7 +8,7 @@ import (
 
 func main() {
 	go func() {
-		dial, err := net.DialTimeout("tcp", "192.168.123.128:9090", 100*time.Second)
+		dial, err := net.DialTimeout("tcp", "10.149.152.35:9099", 100*time.Second)
 		if err != nil {
 			panic(err)
 		}

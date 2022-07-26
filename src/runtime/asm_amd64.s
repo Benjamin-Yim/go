@@ -157,6 +157,8 @@ GLOBL bad_cpu_msg<>(SB), RODATA, $84
 
 #endif
 
+// NOSPLIT 指示编译器不要在这个函数中插入检查栈是否溢出的代码。
+// $0 说明此函数的栈帧大小为0字节，说明此函数没有参数和返回值
 TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 	// copy arguments forward on an even stack
 	MOVQ	DI, AX		// argc

@@ -309,7 +309,9 @@ func asyncPreempt()
 
 //go:nosplit
 func asyncPreempt2() {
-	println("强制抢占")
+	if debugSource {
+		println("强制抢占")
+	}
 	gp := getg()
 	gp.asyncSafePoint = true
 	// 重新进入调度循环进而调度其他 Goroutine（preemptPark 和 gopreempt_m）

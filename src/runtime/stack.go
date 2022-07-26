@@ -111,22 +111,6 @@ const (
 )
 
 const (
-	// stackDebug == 0: no logging
-	//            == 1: logging of per-stack operations
-	//            == 2: logging of per-frame operations
-	//            == 3: logging of per-word updates
-	//            == 4: logging of per-word reads
-	stackDebug       = 1
-	stackFromSystem  = 0 // allocate stacks from system memory instead of the heap
-	stackFaultOnFree = 0 // old stacks are mapped noaccess to detect use after free
-	stackPoisonCopy  = 0 // fill stack that should not be accessed with garbage, to detect bad dereferences during copy
-	stackNoCache     = 0 // disable per-P small stack caches
-
-	// check the BP links during traceback.
-	debugCheckBP = true
-)
-
-const (
 	uintptrMask = 1<<(8*goarch.PtrSize) - 1
 
 	// The values below can be stored to g.stackguard0 to force
@@ -885,7 +869,9 @@ func syncadjustsudogs(gp *g, used uintptr, adjinfo *adjustinfo) uintptr {
 // Copies gp's stack to a new stack of a different size.
 // Caller must have changed gp status to Gcopystack.
 func copystack(gp *g, newsize uintptr) {
-	print("执行栈 copy g:", gp.goid, "\n")
+	if debugSource {
+		print("执行栈 copy g:", gp.goid, "\n")
+	}
 	if gp.syscallsp != 0 {
 		throw("stack growth not allowed in system call")
 	}
