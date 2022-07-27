@@ -1285,6 +1285,7 @@ func startTheWorldWithSema(emitTraceEvent bool) int64 {
 		emitTraceEvent = true
 	}
 	assertWorldStopped()
+
 	mp := acquirem() // disable preemption because it can be holding p in a local var
 	if netpollinited() {
 		if debugSource {

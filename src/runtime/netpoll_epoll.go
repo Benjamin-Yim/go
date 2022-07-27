@@ -105,7 +105,7 @@ func netpollBreak() {
 // delay > 0: block for up to that many nanoseconds
 func netpoll(delay int64) gList {
 	if debugSource {
-		println("遍历 netpoll", millisecond())
+		println("遍历 netpoll", nanotime1()/1e6)
 	}
 	if epfd == -1 {
 		return gList{}
