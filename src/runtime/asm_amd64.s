@@ -260,7 +260,7 @@ needtls:
 	CALL	runtime·settls(SB)
 
 	// store through it, to make sure it works
-	get_tls(BX)
+	get_tls(BX) // 获取fs段基址到BX寄存器
 	MOVQ	$0x123, g(BX)
 	MOVQ	runtime·m0+m_tls(SB), AX
 	CMPQ	AX, $0x123
@@ -351,16 +351,16 @@ ok:
 
 	// create a new goroutine to start program
 	// 创建一个goroutine，然后开启执行程序.runtime.main 作为参数到 AX
-	MOVQ	$runtime·mainPC(SB), AX		// entry
-	PUSHQ	AX
-	CALL	runtime·newproc(SB)   // 先创建一个 G，G 初始化
+	MOVQ	$runtime·mainPC(SB), AX		// entry，mainPC是runtime.main
+	PUSHQ	AX // newproc的参数入栈，也就是新的goroutine需要执行的函数. AX = &funcval{runtime·main},
+	CALL	runtime·newproc(SB)   // 先创建一个 G，G 初始化.初始化时创建main goroutine
 	POPQ	AX
 
 	// start this M
-	// 启动后m0会不断从运行队列获取G并运行, runtime.mstart调用后不会返回
+	// 启动后 m0 会不断从运行队列获取G并运行, runtime.mstart调用后不会返回
 	// 启动线程，并且启动调度系统
 	CALL	runtime·mstart(SB)
-
+    // 上面的mstart永远不应该返回的，如果返回了，一定是代码逻辑有问题，直接abort
 	CALL	runtime·abort(SB)	// mstart should never return
 	RET
 
@@ -402,27 +402,64 @@ TEXT runtime·mstart(SB),NOSPLIT|TOPFRAME,$0
  *  go-routine
  */
 
+// gogo函数也是通过汇编语言编写的，这里之所以需要使用汇编，
+// 是因为goroutine的调度涉及不同执行流之间的切换，前面我们在
+// 讨论操作系统切换线程时已经看到过，执行流的切换从本质上来说就是CPU寄存器以
+// 及函数调用栈的切换，然而不管是go还是c这种高级语言都无法精确
+// 控制CPU寄存器的修改，因而高级语言在这里也就无能为力了，只能依靠汇编指令来达成目的。
+//
+// execute函数在调用gogo时把gp的sched成员的地址作为实参（型参buf）
+// 传递了过来，该参数位于FP寄存器所指的位置，所以第1条指令 MOVQ    buf+0(FP), BX
+//
 // func gogo(buf *gobuf)
 // restore state from Gobuf; longjmp
 TEXT runtime·gogo(SB), NOSPLIT, $0-8
-	MOVQ	buf+0(FP), BX		// gobuf
-	MOVQ	gobuf_g(BX), DX
+    // buf = &gp.sched
+    // 把buf的值也就是gp.sched的地址放在了BX寄存器之中，这样便于后面的指令依靠BX寄存器来存取gp.sched的成员。
+    // main goroutine创建时已经把这些信息设置好了。
+	MOVQ	buf+0(FP), BX		// gobuf,BX = buf
+	// 把gp.sched.g读取到DX寄存器，注意这条指令的源操作数是间接寻址
+	// gobuf->g --> dx register
+	MOVQ	gobuf_g(BX), DX // DX = gp.sched.g
+
+	// 下面这行代码没有实质作用，检查gp.sched.g是否是nil，如果是nil进程会crash
+	// 为什么要让它 crash 死掉 ，原因在于这个gp.sched.g是由go runtime代码负责设置的，
+	// 按道理说不可能为nil，如果为nil，一定是程序逻辑写得有问题，所以需要把这个bug暴露出来，而不是把它隐藏起来。
 	MOVQ	0(DX), CX		// make sure g != nil
 	JMP	gogo<>(SB)
 
 TEXT gogo<>(SB), NOSPLIT, $0
+    // 把要运行的g的指针放入线程本地存储，这样后面的代码就可以通过线程本地存储
+    // 获取到当前正在执行的goroutine的g结构体对象，从而找到与之关联的m和p
 	get_tls(CX) // MOVQ TLS, CX
+
+	// 把DX寄存器的值也就是gp.sched.g(这是一个指向g的指针)写入线程本地存储之中，
+	// 这样后面的代码就可以通过线程本地存储获取到当前正在执行的goroutine的g结构体对象，从而找到与之关联的m和p。
 	MOVQ	DX, g(CX)
+	// 把CPU的SP寄存器设置为sched.sp，完成了栈的切换
 	MOVQ	DX, R14		// 设置TLS中的g为g.sched.g, 也就是g自身. set the g register
+
+	// 设置CPU的栈顶寄存器SP为gp.sched.sp，这条指令完成了栈的切换，从g0的栈切换到了gp的栈。
 	MOVQ	gobuf_sp(BX), SP	// 设置rsp寄存器为g.sched.rsp. restore SP
+	// 下面三条同样是恢复调度上下文到CPU相关寄存器
+	// 根据gp.sched其它字段设置CPU相关寄存器，可以看到这里恢复了CPU的栈基地址寄存器BP
 	MOVQ	gobuf_ret(BX), AX   // 设置rax寄存器为g.sched.ret
 	MOVQ	gobuf_ctxt(BX), DX  // 设置rdx寄存器为g.sched.ctxt (上下文)
 	MOVQ	gobuf_bp(BX), BP    // 设置rbp寄存器为g.sched.rbp
+
+
+	// 清空sched的值，因为我们已把相关值放入CPU对应的寄存器了，不再需要，这样做可以少gc的工作量
 	MOVQ	$0, gobuf_sp(BX)	// 清空sched中保存的信息. clear to help garbage collector
 	MOVQ	$0, gobuf_ret(BX)   //
 	MOVQ	$0, gobuf_ctxt(BX)
 	MOVQ	$0, gobuf_bp(BX)
-	MOVQ	gobuf_pc(BX), BX // 跳转到g.sched.pc
+
+	// 把sched.pc值放入BX寄存器
+	// 把gp.sched.pc的值读取到BX寄存器，这个pc值是gp这个goroutine马上需要执行的第一条指令的地址
+	// 对于启动初始化这个场景来说它现在就是runtime.main函数的第一条指令，现在这条指令的地址就放在BX寄存器里面。
+	MOVQ	gobuf_pc(BX), BX
+	// JMP BX指令把BX寄存器里面的指令地址放入CPU的rip寄存器，于是
+	// CPU就会跳转到该地址继续执行属于gp这个goroutine的代码，这样就完成了goroutine的切换。
 	JMP	BX   // 跳转到g.sched.pc
 
 // func mcall(fn func(*g))

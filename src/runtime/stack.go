@@ -1178,12 +1178,15 @@ func nilfunc() {
 }
 
 // 设置sched.pc等于目标函数的地址
+// gostartcallfn首先从参数fv中提取出函数地址（初始化时是runtime.main），
+// 然后继续调用gostartcall函数
+//
 // adjust Gobuf as if it executed a call to fn
 // and then stopped before the first instruction in fn.
 func gostartcallfn(gobuf *gobuf, fv *funcval) {
 	var fn unsafe.Pointer
 	if fv != nil {
-		fn = unsafe.Pointer(fv.fn)
+		fn = unsafe.Pointer(fv.fn) //fn: gorotine的入口地址，初始化时对应的是runtime.main
 	} else {
 		fn = unsafe.Pointer(abi.FuncPCABIInternal(nilfunc))
 	}
