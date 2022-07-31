@@ -164,12 +164,14 @@ TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 	MOVQ	DI, AX		// argc
 	MOVQ	SI, BX		// argv
 	SUBQ	$(5*8), SP		// 3args 2auto 分配栈空间, 需要2个本地变量+2个函数参数, 然后向8对齐
-	ANDQ	$~15, SP
-	MOVQ	AX, 24(SP)
-	MOVQ	BX, 32(SP) // 把传入的argc和argv保存到栈上
+	ANDQ	$~15, SP    // 调整栈顶 16 字节对齐
+	MOVQ	AX, 24(SP) // argc 参数放在 24 字节处
+	MOVQ	BX, 32(SP) // argv 把传入的argc和argv保存到栈上
 
 	// create istack out of the given (operating system) stack.
 	// _cgo_init may update stackguard.
+	// 从系统线程分出一部分的栈空间给到 g0 栈
+	// _cgo_init 大该会更新这个 stackguard
 	MOVQ	$runtime·g0(SB), DI // 将 g0 地址放到 DI 寄存器
 	LEAQ	(-64*1024+104)(SP), BX
 	MOVQ	BX, g_stackguard0(DI) // 更新g0中的stackguard的值, stackguard用于检测栈空间是否不足, 需要分配新的栈空间
@@ -203,7 +205,7 @@ nocpuinfo:
 	TESTQ	AX, AX
 	JZ	needtls
 	// arg 1: g0, already in DI
-	MOVQ	$setg_gcc<>(SB), SI // arg 2: setg_gcc
+	MOVQ	$setg_gcc<>(SB), SI // arg 2: setg_gcc. g0 地址放到 SI 寄存器
 #ifdef GOOS_android
 	MOVQ	$runtime·tls_g(SB), DX 	// 初始化当前线程的TLS, 设置FS寄存器为m0.tls+8. arg 3: &tls_g
 	// arg 4: TLS base, stored in slot 0 (Android's TLS_SLOT_SELF).
@@ -220,12 +222,12 @@ nocpuinfo:
 	MOVQ	SI, DX // arg 2
 	MOVQ	DI, CX // arg 1
 #endif
-	CALL	AX
+	CALL	AX // call x_cgo_init
 
 	// update stackguard after _cgo_init
-	MOVQ	$runtime·g0(SB), CX
-	MOVQ	(g_stack+stack_lo)(CX), AX
-	ADDQ	$const__StackGuard, AX
+	MOVQ	$runtime·g0(SB), CX // g0 被初始化，这里获取 g0 的地址到 CX
+	MOVQ	(g_stack+stack_lo)(CX), AX // 获取 g0 栈到 暗示
+	ADDQ	$const__StackGuard, AX // 设置栈溢出检查边缘值
 	MOVQ	AX, g_stackguard0(CX)
 	MOVQ	AX, g_stackguard1(CX)
 
