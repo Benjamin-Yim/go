@@ -1247,7 +1247,7 @@ func nextSample() uintptr {
 	}
 	if GOOS == "plan9" {
 		// Plan 9 doesn't support floating point in note handler.
-		if g := getg(); g == g.m.gsignal {
+		if gp := getg(); gp == gp.m.gsignal {
 			return nextSampleNoFP()
 		}
 	}
