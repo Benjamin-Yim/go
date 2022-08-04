@@ -6382,12 +6382,13 @@ retry:
 // Batch is a ring buffer starting at batchHead.
 // Returns number of grabbed goroutines.
 // Can be executed by any P.
+// runqgrap从p的队列中批量拿出多个goroutine
 func runqgrab(pp *p, batch *[256]guintptr, batchHead uint32, stealRunNextG bool) uint32 {
 	for {
 		h := atomic.LoadAcq(&pp.runqhead) // load-acquire, synchronize with other consumers
 		t := atomic.LoadAcq(&pp.runqtail) // load-acquire, synchronize with the producer
-		n := t - h
-		n = n - n/2
+		n := t - h                        //计算队列中有多少个goroutine
+		n = n - n/2                       //取队列中goroutine个数的一半
 		if n == 0 {
 			if stealRunNextG {
 				// Try to steal from pp.runnext.
@@ -6421,6 +6422,7 @@ func runqgrab(pp *p, batch *[256]guintptr, batchHead uint32, stealRunNextG bool)
 			}
 			return 0
 		}
+		// 放置当前计算的值已经不是最新
 		if n > uint32(len(pp.runq)/2) { // read inconsistent h and t
 			continue
 		}
