@@ -3105,16 +3105,17 @@ func stealWork(now int64) (gp *g, inheritTime bool, rnow, pollUntil int64, newWo
 	pp := getg().m.p.ptr()
 
 	ranTimer := false
-
+	// 从其他 P 的本地队列偷取 goroutine
 	const stealTries = 4
 	for i := 0; i < stealTries; i++ {
 		stealTimersOrRunNextG := i == stealTries-1
-
+		// 随机枚举几个数字
 		for enum := stealOrder.start(fastrand()); !enum.done(); enum.next() {
 			if sched.gcwaiting != 0 {
 				// GC work may be available.
 				return nil, false, now, pollUntil, true
 			}
+			// 从全局 P 链表中获取坐标的 P
 			p2 := allp[enum.position()]
 			if pp == p2 {
 				continue
@@ -6436,6 +6437,7 @@ func runqgrab(pp *p, batch *[256]guintptr, batchHead uint32, stealRunNextG bool)
 // Steal half of elements from local runnable queue of p2
 // and put onto local runnable queue of p.
 // Returns one of the stolen elements (or nil if failed).
+// 挑选出盗取的对象p之后，则调用runqsteal盗取p的运行队列中的goroutine，runqsteal函数再调用runqgrap从p的队列中批量拿出多个goroutine
 func runqsteal(pp, p2 *p, stealRunNextG bool) *g {
 	t := pp.runqtail
 	n := runqgrab(p2, &pp.runq, t, stealRunNextG)
