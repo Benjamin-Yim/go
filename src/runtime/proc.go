@@ -699,7 +699,7 @@ func schedinit() {
 
 	// raceinit must be the first call to race detector.
 	// In particular, it must be done before mallocinit below calls racemapshadow.
-	gp := getg()//getg() 在 src/runtime/stubs.go 中声明，真正的代码由编译器生成
+	gp := getg() //getg() 在 src/runtime/stubs.go 中声明，真正的代码由编译器生成
 	if raceenabled {
 		gp.racectx, raceprocctx0 = raceinit()
 	}
@@ -813,7 +813,7 @@ func mcommoninit(mp *m, id int64) {
 	gp := getg() //初始化过程中_g_ = g0
 
 	// g0 stack won't make sense for user (and is not necessary unwindable).
-	if gp != gp.m.g0 {//函数调用栈traceback，不需要关心
+	if gp != gp.m.g0 { //函数调用栈traceback，不需要关心
 		callers(1, mp.createstack[:])
 	}
 
@@ -1447,7 +1447,7 @@ func mstart0() {
 //
 //go:noinline
 func mstart1() {
-	gp := getg()//启动过程时 _g_ = m0的g0
+	gp := getg() //启动过程时 _g_ = m0的g0
 
 	if gp != gp.m.g0 {
 		throw("bad runtime·mstart")
@@ -1461,22 +1461,22 @@ func mstart1() {
 	// and let mstart0 exit the thread.
 	gp.sched.g = guintptr(unsafe.Pointer(gp))
 	gp.sched.pc = getcallerpc() //getcallerpc()获取mstart1执行完的返回地址
-	gp.sched.sp = getcallersp()//getcallersp()获取调用mstart1时的栈顶地址
+	gp.sched.sp = getcallersp() //getcallersp()获取调用mstart1时的栈顶地址
 
 	asminit() //在AMD64 Linux平台中，这个函数什么也没做，是个空函数
 	minit()   //与信号相关的初始化
 
 	// Install signal handlers; after minit so that minit can
 	// prepare the thread to be able to handle the signals.
-	if gp.m == &m0 {//启动时_g_.m是m0，所以会执行下面的mstartm0函数
-		mstartm0()//也是信号相关的初始化
+	if gp.m == &m0 { //启动时_g_.m是m0，所以会执行下面的mstartm0函数
+		mstartm0() //也是信号相关的初始化
 	}
 
-	if fn := gp.m.mstartfn; fn != nil {//初始化过程中fn == nil
+	if fn := gp.m.mstartfn; fn != nil { //初始化过程中fn == nil
 		fn()
 	}
 
-	if gp.m != &m0 {// m0已经绑定了allp[0]，不是m0的话还没有p，所以需要获取一个p
+	if gp.m != &m0 { // m0已经绑定了allp[0]，不是m0的话还没有p，所以需要获取一个p
 		acquirep(gp.m.nextp.ptr())
 		gp.m.nextp = 0
 	}
@@ -1787,7 +1787,8 @@ type cgothreadstart struct {
 //
 // This function is allowed to have write barriers even if the caller
 // isn't because it borrows pp.
-//这个函数允许有写屏障，即使调用方没有，因为它借用了_p_。
+// 这个函数允许有写屏障，即使调用方没有，因为它借用了_p_。
+//
 //go:yeswritebarrierrec
 func allocm(pp *p, fn func(), id int64) *m {
 	allocmLock.rlock()
@@ -2399,10 +2400,10 @@ func startm(pp *p, spinning bool) {
 	// context, otherwise such preemption could occur on function entry to
 	// startm. Callers passing a nil P may be preemptible, so we must
 	// disable preemption before acquiring a P from pidleget below.
-	mp := acquirem()// 获取 m
-	lock(&sched.lock)// 禁止M被其他 p 抢占
-	if pp == nil {// 是空的
-		pp, _ = pidleget(0)// 获取一个空闲的P
+	mp := acquirem()  // 获取 m
+	lock(&sched.lock) // 禁止M被其他 p 抢占
+	if pp == nil {    // 是空的
+		pp, _ = pidleget(0) // 获取一个空闲的P
 		if pp == nil {
 			unlock(&sched.lock)
 			if spinning {
@@ -2439,7 +2440,7 @@ func startm(pp *p, spinning bool) {
 			// The caller incremented nmspinning, so set m.spinning in the new M.
 			fn = mspinning
 		}
-		newm(fn, pp, id)// 新建一个 M
+		newm(fn, pp, id) // 新建一个 M
 		// Ownership transfer of pp committed by start in newm.
 		// Preemption is now safe.
 		releasem(mp)
@@ -2458,7 +2459,7 @@ func startm(pp *p, spinning bool) {
 	// The caller incremented nmspinning, so set m.spinning in the new M.
 	nmp.spinning = spinning
 	nmp.nextp.set(pp)
-	notewakeup(&nmp.park)//唤醒 m 线程去运行 g
+	notewakeup(&nmp.park) //唤醒 m 线程去运行 g
 	// Ownership transfer of pp committed by wakeup. Preemption is now
 	// safe.
 	releasem(mp)
@@ -2711,7 +2712,7 @@ top:
 		gcstopm()
 		goto top
 	}
-	if pp.runSafePointFn != 0 {// 如果M拥有的P中指定了需要在安全点运行的函数(P.runSafePointFn), 则运行它
+	if pp.runSafePointFn != 0 { // 如果M拥有的P中指定了需要在安全点运行的函数(P.runSafePointFn), 则运行它
 		runSafePointFn()
 	}
 
@@ -2745,8 +2746,8 @@ top:
 	// 为了公平起见, 每61次调度从全局运行队列获取一次G,
 	// (一直从本地获取可能导致全局运行队列中的G不被运行)
 	if pp.schedtick%61 == 0 && sched.runqsize > 0 {
-		lock(&sched.lock)
-		gp = globrunqget(pp, 1)
+		lock(&sched.lock)       //所有工作线程都能访问全局运行队列，所以需要加锁
+		gp = globrunqget(pp, 1) //从全局运行队列中获取1个goroutine
 		unlock(&sched.lock)
 		if gp != nil {
 			return gp, false, false
@@ -2754,6 +2755,7 @@ top:
 	}
 
 	// Wake up the finalizer G.
+	// 是否存在析构函数的 G 等待运行，如果有标记为可运行准备运行
 	if fingwait && fingwake {
 		if gp := wakefing(); gp != nil {
 			ready(gp, 0, true)
@@ -3388,7 +3390,7 @@ func injectglist(glist *gList) {
 // 调用schedule函数后就进入了调度循环。进入一个调度循环：发现一个可运行的 goroutine 并且执行这个 goroutinge
 // 没有返回
 func schedule() {
-	mp := getg().m//_g_ = 每个工作线程m对应的g0，初始化时是m0的g0
+	mp := getg().m //_g_ = 每个工作线程m对应的g0，初始化时是m0的g0
 
 	if mp.locks != 0 {
 		throw("schedule: holding locks")
@@ -4369,7 +4371,7 @@ func newproc1(fn *funcval, callergp *g, callerpc uintptr) *g {
 	mp := acquirem() // disable preemption because we hold M and P in local vars.
 	// 获取当前 P ，M 对应 P
 	pp := mp.p.ptr()
-	newg := gfget(pp)// 获取空闲的 g，如果之前有g被回收在这里就可以复用，初始化时没有，返回nil
+	newg := gfget(pp) // 获取空闲的 g，如果之前有g被回收在这里就可以复用，初始化时没有，返回nil
 	if newg == nil {
 		newg = malg(_StackMin)           // 如果没有空闲的 g,新建一个
 		casgstatus(newg, _Gidle, _Gdead) // 已经被初始化了，就设为未被使用的状态
@@ -5176,7 +5178,7 @@ func procresize(nprocs int32) *p {
 		// 继续使用当前 P
 		gp.m.p.ptr().status = _Prunning
 		gp.m.p.ptr().mcache.prepareForSweep()
-	} else {//初始化时执行这个分支
+	} else { //初始化时执行这个分支
 		// release the current P and acquire allp[0].
 		//
 		// We must do this before destroying our current P
@@ -5198,7 +5200,7 @@ func procresize(nprocs int32) *p {
 		pp := allp[0]
 		pp.m = 0
 		pp.status = _Pidle
-		acquirep(pp)// 把p和m0关联起来，其实是这两个strct的成员相互赋值,直接将 allp[0] 绑定到当前的 M
+		acquirep(pp) // 把p和m0关联起来，其实是这两个strct的成员相互赋值,直接将 allp[0] 绑定到当前的 M
 		if trace.enabled {
 			traceGoStart()
 		}
@@ -5983,30 +5985,37 @@ func globrunqputbatch(batch *gQueue, n int32) {
 
 // Try get a batch of G's from the global runnable queue.
 // sched.lock must be held.
+// 从全局获取 g
 func globrunqget(pp *p, max int32) *g {
 	assertLockHeld(&sched.lock)
 
-	if sched.runqsize == 0 {
+	if sched.runqsize == 0 { //全局运行队列为空
 		return nil
 	}
-
+	//根据p的数量平分全局运行队列中的goroutines
 	n := sched.runqsize/gomaxprocs + 1
+	//上面计算n的方法可能导致n大于全局运行队列中的goroutine数量
 	if n > sched.runqsize {
 		n = sched.runqsize
 	}
+	//最多取max个goroutine
 	if max > 0 && n > max {
 		n = max
 	}
+	//最多只能取本地队列容量的一半
 	if n > int32(len(pp.runq))/2 {
 		n = int32(len(pp.runq)) / 2
 	}
 
 	sched.runqsize -= n
-
+	//直接通过函数返回gp，其它的goroutines通过runqput放入本地运行队列
+	//pop从全局运行队列的队列头取
 	gp := sched.runq.pop()
 	n--
 	for ; n > 0; n-- {
+		//从全局运行队列中取出一个goroutine
 		gp1 := sched.runq.pop()
+		//放入本地运行队列
 		runqput(pp, gp1, false)
 	}
 	return gp
@@ -6286,23 +6295,43 @@ func runqputbatch(pp *p, q *gQueue, qsize int) {
 // If inheritTime is true, gp should inherit the remaining time in the
 // current time slice. Otherwise, it should start a new time slice.
 // Executed only by the owner P.
+//
+// 从工作线程本地运行队列中获取goroutine.工作线程的本地运行队列其实分为两个部分，一部分是由p的runq、runqhead和runqtail这三个成员
+// 组成的一个无锁循环队列，该队列最多可包含256个goroutine；另一部分是p的runnext成员，它是一个指向g结构体对象的指针，
+// 它最多只包含一个goroutine。
+// 从本地运行队列中寻找goroutine是通过runqget函数完成的，寻找时，代码首先查看runnext成员是否为空，如果不为空则返回runnext所指
+// 的goroutine，并把runnext成员清零，如果runnext为空，则继续从循环队列中查找goroutine。
 func runqget(pp *p) (gp *g, inheritTime bool) {
 	// If there's a runnext, it's the next G to run.
+	// 如果这个 P 存在下一个将要运行的 G,一般是析构 G
+	// 从runnext成员中获取goroutine
 	next := pp.runnext
 	// If the runnext is non-0 and the CAS fails, it could only have been stolen by another P,
 	// because other Ps can race to set runnext to 0, but only the current P can set it to non-0.
 	// Hence, there's no need to retry this CAS if it falls.
+	// 如果 P 存在下一个将要运行的 G.就运行，并且将状态置空
 	if next != 0 && pp.runnext.cas(next, 0) {
 		return next.ptr(), true
 	}
-
+	//从循环队列中获取goroutine
 	for {
+		// atomic.LoadAcq 语义
+		// 1. 原子读取，也就是说不管代码运行在哪种平台，保证在读取过程中不会有其它线程对该变量进行写入；
+		// 2. 位于atomic.LoadAcq之后的代码，对内存的读取和写入必须在atomic.LoadAcq读取完成后才能执行，编译器和CPU都不能打乱这个顺序
+		// 3. 当前线程执行atomic.LoadAcq时可以读取到其它线程最近一次通过atomic.CasRel对同一个变量写入的值，与此同时，
+		// 位于atomic.LoadAcq之后的代码， 不管读取哪个内存地址中的值，都可以读取到其它线程中位于atomic.CasRel（对同一个变量操作）
+		// 之前的代码最近一次对内存的写入。
 		h := atomic.LoadAcq(&pp.runqhead) // load-acquire, synchronize with other consumers
 		t := pp.runqtail
 		if t == h {
 			return nil, false
 		}
 		gp := pp.runq[h%uint32(len(pp.runq))].ptr()
+		// atomic.CasRel 语义
+		// 1. 原子的执行比较并交换的操作；
+		// 2. 位于atomic.CasRel之前的代码，对内存的读取和写入必须在atomic.CasRel对内存的写入之前完成，编译器和CPU都不能打乱这个顺序；
+		// 3. 线程执行atomic.CasRel完成后其它线程通过atomic.LoadAcq读取同一个变量可以读到最新的值，与此同时，
+		//  位于atomic.CasRel之前的代码对内存写入的值，可以被其它线程中位于atomic.LoadAcq（对同一个变量操作）之后的代码读取到。
 		if atomic.CasRel(&pp.runqhead, h, h+1) { // cas-release, commits consume
 			return gp, false
 		}

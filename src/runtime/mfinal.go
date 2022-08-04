@@ -34,8 +34,8 @@ var fing *g        // goroutine that runs finalizers
 var finq *finblock // list of finalizers that are to be executed
 var finc *finblock // cache of free blocks
 var finptrmask [_FinBlockSize / goarch.PtrSize / 8]byte
-var fingwait bool
-var fingwake bool
+var fingwait bool    // 析构函数是否在等待执行
+var fingwake bool    // 析构函数是否在等待唤醒
 var allfin *finblock // list of all blocks
 
 // NOTE: Layout known to queuefinalizer.

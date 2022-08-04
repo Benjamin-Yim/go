@@ -466,31 +466,38 @@ TEXT gogo<>(SB), NOSPLIT, $0
 // Switch to m->g0's stack, call fn(g).
 // Fn must never return. It should gogo(&g->sched)
 // to keep running g.
+//
+// 主要功能：
+// 1. 首先从当前运行的 g 切换到 g0。这一步包含了保存 g 的上下文信息。
+//    把 g0 设置到 TLS 中，修改 CPU 的 RSP 寄存器指向其 g0 的堆栈
+// 2. 以当前运行的 g 为参数调用 fn 函数
+// 3. 当调用当前方法时已经完成了普通栈到 runtime 栈的切换，所以不需要切换 g->g0 栈
 TEXT runtime·mcall<ABIInternal>(SB), NOSPLIT, $0-8
-	MOVQ	AX, DX	// DX = fn
-
+	MOVQ	AX, DX	// DX = fn，DX 存放 g的参数 将要运行的 func
+    // R14 里面保存的时 g
 	// 会把当前的状态保存到g.sched. save state in g->sched
 	MOVQ	0(SP), BX	// caller's PC
 	MOVQ	BX, (g_sched+gobuf_pc)(R14)
 	LEAQ	fn+0(FP), BX	// caller's SP
-	MOVQ	BX, (g_sched+gobuf_sp)(R14)
-	MOVQ	BP, (g_sched+gobuf_bp)(R14)
+	MOVQ	BX, (g_sched+gobuf_sp)(R14) // 保存 g.rsp
+	MOVQ	BP, (g_sched+gobuf_bp)(R14) // 保存 g.rbp
     // 然后切换到g0和g0的栈空间并执行指定的函数
 	// switch to m->g0 & its stack, call fn
 	MOVQ	g_m(R14), BX
 	MOVQ	m_g0(BX), SI	// SI = g.m.g0
+	//  如果当前 g 等于 g0 那么代码肯定出错了
 	CMPQ	SI, R14	// if g == m->g0 call badmcall
 	JNE	goodm
 	JMP	runtime·badmcall(SB)
 goodm:
-	MOVQ	R14, AX		// AX (and arg 0) = g
-	MOVQ	SI, R14		// g = g.m.g0
-	get_tls(CX)		// Set G in TLS
-	MOVQ	R14, g(CX)
+	MOVQ	R14, AX		// AX (and arg 0) = g，把 g 的参数存储到 AX 中
+	MOVQ	SI, R14		// g = g.m.g0 // 使用 g0 地址覆盖 AX
+	get_tls(CX)		// Set G in TLS // 将 G上下文保存到 TLS
+	MOVQ	R14, g(CX) // 将 g0 保存线程上下文
 	// 设置寄存器rsp等于 g0.sched.sp , 使用g0的栈空间
 	MOVQ	(g_sched+gobuf_sp)(R14), SP	// sp = g0.sched.sp
-	PUSHQ	AX	// open up space for fn's arg spill slot
-	MOVQ	0(DX), R12
+	PUSHQ	AX	// fn 的参数 g入栈。open up space for fn's arg spill slot
+	MOVQ	0(DX), R12 // func 存放到 R12
 	CALL	R12		// 调用指定的函数 fn(g)
 	POPQ	AX
 	JMP	runtime·badmcall2(SB)
