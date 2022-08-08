@@ -361,6 +361,8 @@ func goschedguarded() {
 // Reason explains why the goroutine has been parked. It is displayed in stack
 // traces and heap dumps. Reasons should be unique and descriptive. Do not
 // re-use reasons, add new ones.
+//
+// gopark则调用mcall从当前main goroutine切换到g0去执行park_m函数
 func gopark(unlockf func(*g, unsafe.Pointer) bool, lock unsafe.Pointer, reason waitReason, traceEv byte, traceskip int) {
 	if reason != waitReasonSleep {
 		checkTimeouts() // timeouts may expire while two goroutines keep the scheduler busy
@@ -378,7 +380,7 @@ func gopark(unlockf func(*g, unsafe.Pointer) bool, lock unsafe.Pointer, reason w
 	mp.waittraceskip = traceskip
 	releasem(mp)
 	// can't do anything that might move the G between Ms here.
-	mcall(park_m)
+	mcall(park_m) //切换到g0栈执行park_m函数
 }
 
 // Puts the current goroutine into a waiting state and unlocks the lock.
@@ -1209,6 +1211,14 @@ var gcsema uint32 = 1
 // startTheWorldWithSema and stopTheWorldWithSema.
 // Holding worldsema causes any other goroutines invoking
 // stopTheWorld to block.
+//
+// 1. 对于那些此时此刻并未运行go代码的p，包括位于空闲队列之中
+// 的p以及处于系统调用之中的p，通过直接设置其状态为_Pgcstop来阻止工作线程
+// 绑定它们，从而保持内存引用的一致性。因为工作线程要执行go代码就必须要绑定p，没
+// 有p工作线程就无法运行go代码，不运行go代码也就无法修改内存之间的引用关系；
+//
+// 2. 对于那些此时此刻绑定到某个工作线程正在运行go代码的p，不能简单的修改其状态，
+// 只能通过设置抢占标记来请求它们停下来；
 func stopTheWorldWithSema() {
 	gp := getg()
 
@@ -1219,15 +1229,16 @@ func stopTheWorldWithSema() {
 	}
 
 	lock(&sched.lock)
-	sched.stopwait = gomaxprocs
-	atomic.Store(&sched.gcwaiting, 1)
-	preemptall()
-	// stop current P
+	sched.stopwait = gomaxprocs       // gomaxprocs即p的数量，需要等待所有的p停下来
+	atomic.Store(&sched.gcwaiting, 1) //设置gcwaiting标志，表示我们正在等待着垃圾回收
+	preemptall()                      //设置抢占标记，希望处于运行之中的goroutine停下来
+	// stop current P，暂停当前P
 	gp.m.p.ptr().status = _Pgcstop // Pgcstop is only diagnostic.
 	sched.stopwait--
 	// try to retake all P's in Psyscall status
 	for _, pp := range allp {
 		s := pp.status
+		// 通过修改p的状态为_Pgcstop抢占那些处于系统调用之中的goroutine
 		if s == _Psyscall && atomic.Cas(&pp.status, s, _Pgcstop) {
 			if trace.enabled {
 				traceGoSysBlock(pp)
@@ -1239,7 +1250,7 @@ func stopTheWorldWithSema() {
 	}
 	// stop idle P's
 	now := nanotime()
-	for {
+	for { //修改idle队列中p的状态为_Pgcstop，这样就不会被工作线程拿去使用了
 		pp, _ := pidleget(now)
 		if pp == nil {
 			break
@@ -1251,14 +1262,14 @@ func stopTheWorldWithSema() {
 	unlock(&sched.lock)
 
 	// wait for remaining P's to stop voluntarily
-	if wait {
+	if wait { // 等待处于运行之中的p停下来。
 		for {
 			// wait for 100us, then try to re-preempt in case of any races
 			if notetsleep(&sched.stopnote, 100*1000) {
 				noteclear(&sched.stopnote)
 				break
 			}
-			preemptall()
+			preemptall() //循环中反复设置抢占标记
 		}
 	}
 
@@ -1509,8 +1520,8 @@ func mstartm0() {
 //go:nosplit
 func mPark() {
 	gp := getg()
-	notesleep(&gp.m.park)
-	noteclear(&gp.m.park)
+	notesleep(&gp.m.park) //进入睡眠状态
+	noteclear(&gp.m.park) //被其它工作线程唤醒
 }
 
 // mexit tears down and exits the current thread.
@@ -2243,6 +2254,8 @@ func newm(fn func(), pp *p, id int64) {
 	releasem(getg().m)
 }
 
+// newm1继续调用newosproc函数，newosproc的主要任务是调用clone函数
+// 创建一个系统线程，而新建的这个系统线程将从mstart函数开始运行。
 // newm1 会新建一个m的实例, m的实例包含一个g0
 func newm1(mp *m) {
 	if iscgo {
@@ -2344,6 +2357,7 @@ func templateThread() {
 
 // Stops execution of the current m until new work is available.
 // Returns with acquired P.
+// 如果工作线程经过多次努力一直找不到需要运行的goroutine则调用stopm进入睡眠状态，等待被其它工作线程唤醒。
 func stopm() {
 	gp := getg()
 
@@ -2358,9 +2372,9 @@ func stopm() {
 	}
 
 	lock(&sched.lock)
-	mput(gp.m)
-	unlock(&sched.lock)
-	mPark()
+	mput(gp.m)          //把m结构体对象放入sched.midle空闲队列
+	unlock(&sched.lock) //进入睡眠状态
+	mPark()             //等待被其它工作线程唤醒
 	acquirep(gp.m.nextp.ptr())
 	gp.m.nextp = 0
 }
@@ -2409,6 +2423,7 @@ func startm(pp *p, spinning bool) {
 			if spinning {
 				// The caller incremented nmspinning, but there are no idle Ps,
 				// so it's okay to just undo the increment and give up.
+				// spinning为true表示进入这个函数之前已经对sched.nmspinning加了1，需要还原
 				if int32(atomic.Xadd(&sched.nmspinning, -1)) < 0 {
 					throw("startm: negative nmspinning")
 				}
@@ -2417,7 +2432,7 @@ func startm(pp *p, spinning bool) {
 			return
 		}
 	}
-	nmp := mget() // 调用mget从"空闲M链表"获取一个空闲的M
+	nmp := mget() // 调用mget从"空闲M链表"获取一个空闲的M，所有处于睡眠状态的m都在此队列中
 	if nmp == nil {
 		// 没有空闲的 M，如果没有空闲的M, 则调用newm新建一个M
 		// No M is available, we must drop sched.lock and call newm.
@@ -2542,11 +2557,13 @@ func handoffp(pp *p) {
 // 当 G 可能运行时（newproc, ready）时调用该函数
 func wakep() {
 	if atomic.Load(&sched.npidle) == 0 {
+		// 没有空闲的 P 直接返回
 		return
 	}
+	//有空闲的p而且没有正在偷取goroutine的工作线程，则需要唤醒p出来工作
 	// be conservative about spinning threads
-	// 对自旋线程保守一些，必要时只增加一个
-	// 如果失败，则立即返回
+	// 再次确认当前工作线程是否处于 spining 状态，处于 spining 状态，则立即返回
+	// 或者如果设置当前工作线程为 spining 状态，如果设置失败，则立即返回
 	if atomic.Load(&sched.nmspinning) != 0 || !atomic.Cas(&sched.nmspinning, 0, 1) {
 		return
 	}
@@ -5737,10 +5754,11 @@ func retake(now int64) uint32 {
 // Returns true if preemption request was issued to at least one goroutine.
 func preemptall() bool {
 	res := false
-	for _, pp := range allp {
+	for _, pp := range allp { //遍历所有的p
 		if pp.status != _Prunning {
 			continue
 		}
+		// 只请求处于运行状态的goroutine暂停
 		if preemptone(pp) {
 			res = true
 		}
@@ -5765,11 +5783,11 @@ func preemptone(pp *p) bool {
 	if mp == nil || mp == getg().m {
 		return false
 	}
-	gp := mp.curg
+	gp := mp.curg //通过p找到正在执行的goroutine
 	if gp == nil || gp == mp.g0 {
 		return false
 	}
-	// 设置g.preempt = true
+	// 设置抢占调度标记
 	gp.preempt = true
 
 	// Every call in a goroutine checks for stack overflow by
@@ -6177,6 +6195,7 @@ const randomizeScheduler = raceenabled
 // If next is true, runqput puts g in the pp.runnext slot.
 // If the run queue is full, runnext puts g on the global queue.
 // Executed only by the owner P.
+//
 // 尝试将 g  放入本地待运行队列
 // 如果队列满了就放入全局队列
 func runqput(pp *p, gp *g, next bool) {
@@ -6185,25 +6204,35 @@ func runqput(pp *p, gp *g, next bool) {
 	}
 	// next== true 抢占 g 的意思，非公平竞争资源
 	if next {
+		//把gp放在_p_.runnext成员里，
+		//runnext成员中的goroutine会被优先调度起来运行
 	retryNext:
 		oldnext := pp.runnext
 		if !pp.runnext.cas(oldnext, guintptr(unsafe.Pointer(gp))) {
+			//有其它线程在操作runnext成员，需要重试
 			goto retryNext
 		}
-		if oldnext == 0 {
+		if oldnext == 0 { //原本runnext为nil，所以没任何事情可做了，直接返回
 			return
 		}
 		// Kick the old runnext out to the regular run queue.
-		// 将旧的下一个待运行的g到移动到队尾。
+		// 将原本将要运行的下一个g移动到 runq 队尾。
 		gp = oldnext.ptr()
 	}
 
 retry:
+	//可能有其它线程正在并发修改runqhead成员，所以需要跟其它线程同步
 	h := atomic.LoadAcq(&pp.runqhead) // load-acquire, synchronize with consumers
 	t := pp.runqtail
-	if t-h < uint32(len(pp.runq)) {
-		// 尝试把g放到P的"本地运行队列"
+	if t-h < uint32(len(pp.runq)) { //判断队列是否满了
+		// 队列还没有满，尝试把g放到P的"本地运行队列"
 		pp.runq[t%uint32(len(pp.runq))].set(gp)
+
+		//虽然没有其它线程并发修改这个runqtail，但其它线程会并发读取该值以及p的runq成员
+		//这里使用StoreRel是为了：
+		//1，原子写入runqtail
+		//2，防止编译器和CPU乱序，保证上一行代码对runq的修改发生在修改runqtail之前
+		//3，可见行屏障，保证当前线程对运行队列的修改对其它线程立马可见
 		atomic.StoreRel(&pp.runqtail, t+1) // store-release, makes the item available for consumption
 		return
 	}
@@ -6219,8 +6248,9 @@ retry:
 
 // Put g and a batch of work from local runnable queue on global queue.
 // Executed only by the owner P.
+// runqputslow函数把gp放入全局运行队列
 func runqputslow(pp *p, gp *g, h, t uint32) bool {
-	var batch [len(pp.runq)/2 + 1]*g
+	var batch [len(pp.runq)/2 + 1]*g //gp加上_p_本地队列的一半
 
 	// First, grab a batch from local queue.
 	n := t - h
@@ -6228,7 +6258,7 @@ func runqputslow(pp *p, gp *g, h, t uint32) bool {
 	if n != uint32(len(pp.runq)/2) {
 		throw("runqputslow: queue is not full")
 	}
-	for i := uint32(0); i < n; i++ {
+	for i := uint32(0); i < n; i++ { //取出p本地队列的一半
 		batch[i] = pp.runq[(h+i)%uint32(len(pp.runq))].ptr()
 	}
 	if !atomic.CasRel(&pp.runqhead, h, h+n) { // cas-release, commits consume
@@ -6244,6 +6274,8 @@ func runqputslow(pp *p, gp *g, h, t uint32) bool {
 	}
 
 	// Link the goroutines.
+	//全局运行队列是一个链表，这里首先把所有需要放入全局运行队列的g链接起来，
+	//减少后面对全局链表的锁住时间，从而降低锁冲突
 	for i := uint32(0); i < n; i++ {
 		batch[i].schedlink.set(batch[i+1])
 	}
@@ -6422,7 +6454,7 @@ func runqgrab(pp *p, batch *[256]guintptr, batchHead uint32, stealRunNextG bool)
 			}
 			return 0
 		}
-		// 放置当前计算的值已经不是最新
+		// 防止当前计算的值已经不是最新
 		if n > uint32(len(pp.runq)/2) { // read inconsistent h and t
 			continue
 		}
