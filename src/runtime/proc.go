@@ -1408,9 +1408,9 @@ func mstart0() {
 	// 判断当前 g 是否分配过栈空间
 	// 对于启动过程来说，g0的stack.lo早已完成初始化，所以onStack = false
 	osStack := gp.stack.lo == 0
-	if debugSource && _g_.m.id == 0 {
+	if debugSource && gp.m.id == 0 {
 		println("Main 正式启动")
-		print("m0.g", _g_.goid, "\n")
+		print("m0.g", gp.goid, "\n")
 	}
 	if osStack {
 		// 没有分配过
@@ -4532,6 +4532,9 @@ func saveAncestors(callergp *g) *[]ancestorInfo {
 // Put on gfree list.
 // If local list is too long, transfer a batch to the global list.
 func gfput(pp *p, gp *g) {
+	if debugSource {
+		println("[gfput] goroutine 大小:", unsafe.Sizeof(*gp), "byte")
+	}
 	if readgstatus(gp) != _Gdead {
 		throw("gfput: bad status (not Gdead)")
 	}
@@ -5505,13 +5508,13 @@ func sysmon() {
 		} else if idle > 50 { // idel 大于 50 的时候设置为双倍增长。start doubling the sleep after 1ms...
 			delay *= 2
 			if debugSource {
-				println("周期在 ", delay, "us")
+				println("sysmon 查找循环可运行 goroutine 周期在 ", delay, "us")
 			}
 		}
 		if delay > 10*1000 { // 延迟上限最终是 10ms。 up to 10ms
 			delay = 10 * 1000
 			if debugSource {
-				println("周期在 10ms")
+				println("sysmon 查找循环可运行 goroutine 周期在 10ms")
 			}
 		}
 		usleep(delay)

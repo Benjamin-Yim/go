@@ -456,6 +456,7 @@ func stackalloc(n uint32) stack {
 //
 //go:systemstack
 func stackfree(stk stack) {
+
 	gp := getg()
 	v := unsafe.Pointer(stk.lo)
 	n := stk.hi - stk.lo
@@ -464,6 +465,9 @@ func stackfree(stk stack) {
 	}
 	if stk.lo+n < stk.hi {
 		throw("bad stack size")
+	}
+	if debugSource {
+		println("释放栈空间:", n, ",hi:", unsafe.Pointer(stk.hi), ",lo:", unsafe.Pointer(stk.lo))
 	}
 	if stackDebug >= 1 {
 		println("stackfree", v, n)
