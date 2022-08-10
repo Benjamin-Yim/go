@@ -136,6 +136,12 @@ func unsafeslice(et *_type, ptr unsafe.Pointer, len int) {
 		panicunsafeslicelen()
 	}
 
+	if et.size == 0 {
+		if ptr == nil && len > 0  {
+			panicunsafeslicenilptr()
+		}
+	}
+
 	mem, overflow := math.MulUintptr(et.size, uintptr(len))
 	if overflow || mem > -uintptr(ptr) {
 		if ptr == nil {
@@ -202,7 +208,7 @@ func growslice(et *_type, old slice, cap int) slice {
 	}
 
 	if cap < old.cap {
-		panic(errorString("growslice: cap out of range"))
+		panic(errorString("growslice: len out of range"))
 	}
 
 	if et.size == 0 {
@@ -291,7 +297,7 @@ func growslice(et *_type, old slice, cap int) slice {
 	//   print(len(s), "\n")
 	// }
 	if overflow || capmem > maxAlloc {
-		panic(errorString("growslice: cap out of range"))
+		panic(errorString("growslice: len out of range"))
 	}
 
 	var p unsafe.Pointer

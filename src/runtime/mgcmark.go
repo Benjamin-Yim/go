@@ -387,7 +387,9 @@ func markrootSpans(gcw *gcWork, shard int) {
 				// Mark everything that can be reached from
 				// the object (but *not* the object itself or
 				// we'll never collect it).
-				scanobject(p, gcw)
+				if !s.spanclass.noscan() {
+					scanobject(p, gcw)
+				}
 
 				// The special itself is a root.
 				scanblock(uintptr(unsafe.Pointer(&spf.fn)), goarch.PtrSize, &oneptrmask[0], gcw, nil)
@@ -440,7 +442,7 @@ retry:
 	// will just cause steals to fail until credit is accumulated
 	// again, so in the long run it doesn't really matter, but we
 	// do have to handle the negative credit case.
-	bgScanCredit := atomic.Loadint64(&gcController.bgScanCredit)
+	bgScanCredit := gcController.bgScanCredit.Load()
 	stolen := int64(0)
 	if bgScanCredit > 0 {
 		if bgScanCredit < scanWork {
@@ -450,7 +452,7 @@ retry:
 			stolen = scanWork
 			gp.gcAssistBytes += debtBytes
 		}
-		atomic.Xaddint64(&gcController.bgScanCredit, -stolen)
+		gcController.bgScanCredit.Add(-stolen)
 
 		scanWork -= stolen
 
@@ -639,7 +641,7 @@ func gcParkAssist() bool {
 	// the queue, but can still back out. This avoids a
 	// race in case background marking has flushed more
 	// credit since we checked above.
-	if atomic.Loadint64(&gcController.bgScanCredit) > 0 {
+	if gcController.bgScanCredit.Load() > 0 {
 		work.assistQueue.q = oldList
 		if oldList.tail != 0 {
 			oldList.tail.ptr().schedlink.set(nil)
@@ -668,7 +670,7 @@ func gcFlushBgCredit(scanWork int64) {
 		// small window here where an assist may add itself to
 		// the blocked queue and park. If that happens, we'll
 		// just get it on the next flush.
-		atomic.Xaddint64(&gcController.bgScanCredit, scanWork)
+		gcController.bgScanCredit.Add(scanWork)
 		return
 	}
 
@@ -708,7 +710,7 @@ func gcFlushBgCredit(scanWork int64) {
 		// Convert from scan bytes back to work.
 		assistWorkPerByte := gcController.assistWorkPerByte.Load()
 		scanWork = int64(float64(scanBytes) * assistWorkPerByte)
-		atomic.Xaddint64(&gcController.bgScanCredit, scanWork)
+		gcController.bgScanCredit.Add(scanWork)
 	}
 	unlock(&work.assistQueue.lock)
 }
@@ -1271,22 +1273,14 @@ func scanobject(b uintptr, gcw *gcWork) {
 	if n == 0 {
 		throw("scanobject n == 0")
 	}
+	if s.spanclass.noscan() {
+		throw("scanobject of a noscan object")
+	}
 
 	if n > maxObletBytes {
 		// Large object. Break into oblets for better
 		// parallelism and lower latency.
 		if b == s.base() {
-			// It's possible this is a noscan object (not
-			// from greyobject, but from other code
-			// paths), in which case we must *not* enqueue
-			// oblets since their bitmaps will be
-			// uninitialized.
-			if s.spanclass.noscan() {
-				// Bypass the whole scan.
-				gcw.bytesMarked += uint64(n)
-				return
-			}
-
 			// Enqueue the other oblets to scan later.
 			// Some oblets may be in b's scalar tail, but
 			// these will be marked as "no more pointers",

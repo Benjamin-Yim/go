@@ -1989,6 +1989,13 @@ func (r *reader) expr() (res ir.Node) {
 		case ir.OAPPEND:
 			n := n.(*ir.CallExpr)
 			n.RType = r.rtype(pos)
+			// For append(a, b...), we don't need the implicit conversion. The typechecker already
+			// ensured that a and b are both slices with the same base type, or []byte and string.
+			if n.IsDDD {
+				if conv, ok := n.Args[1].(*ir.ConvExpr); ok && conv.Op() == ir.OCONVNOP && conv.Implicit() {
+					n.Args[1] = conv.X
+				}
+			}
 		case ir.OCOPY:
 			n := n.(*ir.BinaryExpr)
 			n.RType = r.rtype(pos)
@@ -2019,6 +2026,7 @@ func (r *reader) expr() (res ir.Node) {
 		typ := r.typ()
 		pos := r.pos()
 		typeWord, srcRType := r.convRTTI(pos)
+		dstTypeParam := r.Bool()
 		x := r.expr()
 
 		// TODO(mdempsky): Stop constructing expressions of untyped type.
@@ -2034,12 +2042,21 @@ func (r *reader) expr() (res ir.Node) {
 			base.ErrorExit() // harsh, but prevents constructing invalid IR
 		}
 
-		n := ir.NewConvExpr(pos, ir.OCONV, typ, x)
-		n.TypeWord, n.SrcRType = typeWord, srcRType
+		ce := ir.NewConvExpr(pos, ir.OCONV, typ, x)
+		ce.TypeWord, ce.SrcRType = typeWord, srcRType
 		if implicit {
-			n.SetImplicit(true)
+			ce.SetImplicit(true)
 		}
-		return typecheck.Expr(n)
+		n := typecheck.Expr(ce)
+
+		// spec: "If the type is a type parameter, the constant is converted
+		// into a non-constant value of the type parameter."
+		if dstTypeParam && ir.IsConstNode(n) {
+			// Wrap in an OCONVNOP node to ensure result is non-constant.
+			n = Implicit(ir.NewConvExpr(pos, ir.OCONVNOP, n.Type(), n))
+			n.SetTypecheck(1)
+		}
+		return n
 	}
 }
 
