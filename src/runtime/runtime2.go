@@ -459,12 +459,12 @@ type g struct {
 	//    stack may have moved in the meantime.
 	// 3. By debugCallWrap to pass parameters to a new goroutine because allocating a
 	//    closure in the runtime is forbidden.
-	param        unsafe.Pointer // wakeup唤醒时传递的参数
-	atomicstatus uint32         //  g的当前状态,状态 Gidle,Grunnable,Grunning,Gsyscall,Gwaiting,Gdead
-	stackLock    uint32         // sigprof/scang lock; TODO: fold in to atomicstatus
-	goid         int64
-	schedlink    guintptr   // 指向全局运行队列中的下一个g，所有位于全局运行队列中的g形成一个链表
-	waitsince    int64      // 阻塞时长. approx time when the g become blocked
+	param        unsafe.Pointer  // wakeup唤醒时传递的参数
+	atomicstatus uint32 //  g的当前状态,状态 Gidle,Grunnable,Grunning,Gsyscall,Gwaiting,Gdead
+	stackLock    uint32 // sigprof/scang lock; TODO: fold in to atomicstatus
+	goid         uint64
+	schedlink    guintptr // 指向全局运行队列中的下一个g，所有位于全局运行队列中的g形成一个链表
+	waitsince    int64       // 阻塞时长.  approx time when the g become blocked
 	waitreason   waitReason // g被阻塞的原因. if status==Gwaiting
 	// 如果需要抢占调度，设置preempt为true. 执行 stackguard0 = stackpreempt，
 	preempt       bool // preemption signal, duplicates stackguard0 = stackpreempt
@@ -840,33 +840,38 @@ type p struct {
 type schedt struct {
 	// accessed atomically. keep at top to ensure alignment on 32-bit systems.
 	// 需以原子访问访问。保持在 struct 顶部，以使其在 32 位系统上可以对齐
-	goidgen   uint64
-	lastpoll  uint64 // 上次网络轮询的时间,如果当前正在轮询,则为0. time of last network poll, 0 if currently polling
-	pollUntil uint64 // 当前轮询休眠的时间. time to which current poll is sleeping
+	goidgen   atomic.Uint64
+	lastpoll  atomic.Int64 // 上次网络轮询的时间,如果当前正在轮询,则为0. time of last network poll, 0 if currently polling
+	pollUntil atomic.Int64 // 当前轮询休眠的时间. time to which current poll is sleeping
+	goidgen   atomic.Uint64
+	lastpoll  atomic.Int64 // time of last network poll, 0 if currently polling
+	pollUntil atomic.Int64 // time to which current poll is sleeping
 
 	lock mutex
 
 	// When increasing nmidle, nmidlelocked, nmsys, or nmfreed, be
 	// sure to call checkdead().
+
 	// 由空闲的工作线程组成的链表
-	midle muintptr // idle m's waiting for work
+	midle        muintptr // idle m's waiting for work
 	// 空闲的工作线程的数量
-	nmidle int32 // number of idle m's waiting for work
+	nmidle       int32    // number of idle m's waiting for work
 	// 空闲的且被 lock 的 m 计数
-	nmidlelocked int32 // number of locked m's waiting for work
+	nmidlelocked int32    // number of locked m's waiting for work
 	// 已经创建的多个m，下一个m id
-	mnext int64 // number of m's that have been created and next M ID
+	mnext        int64    // number of m's that have been created and next M ID
 	// 被允许创建的最大m线程数量
-	maxmcount int32 // maximum number of m's allowed (or die)
-	nmsys     int32 // 系统 m 的数量不计入死锁.number of system m's not counted for deadlock
+	maxmcount    int32    // maximum number of m's allowed (or die)
+	nmsys        int32    // number of system m's not counted for deadlock
 	// 累积空闲的m数量
-	nmfreed int64 // cumulative number of freed m's
+	nmfreed      int64    // cumulative number of freed m's
 	// 系统goroutine的数量，自动更新
-	ngsys uint32 // number of system goroutines; updated atomically
+	ngsys atomic.Int32 // number of system goroutines
 	// 由空闲的 p 结构体对象组成的链表
-	pidle      puintptr // 空闲 p 链表. idle p's
-	npidle     uint32   // n 个 p 处于空闲的状态
-	nmspinning uint32   // m 处理自旋的状态。 See "Worker thread parking/unparking" comment in proc.go.
+	pidle        puintptr // 空闲 p 链表. idle p's
+	npidle       atomic.Int32// n 个 p 处于空闲的状态
+	nmspinning   atomic.Int32 // m 处理自旋的状态。 See "Worker thread parking/unparking" comment in proc.go.
+	needspinning atomic.Uint32 // See "Delicate dance" comment in proc.go. Boolean. Must hold sched.lock to set to 1.
 
 	// Global runnable queue.
 
@@ -907,11 +912,12 @@ type schedt struct {
 	// m.exited is set. Linked through m.freelink.
 	// freem 是当 他们的 m.exited 被设置时的等待被释放m列表，通过 m.freelink 链接
 	freem *m
+
 	// gc正在等待运行
-	gcwaiting  uint32 // gc is waiting to run
+	gcwaiting  atomic.Bool // gc is waiting to run
 	stopwait   int32
 	stopnote   note
-	sysmonwait uint32
+	sysmonwait atomic.Bool
 	sysmonnote note
 
 	// safepointFn should be called on each P at the next GC
@@ -933,11 +939,11 @@ type schedt struct {
 	// 在运行时，sysmonlock保护 sysmon 的运行
 	sysmonlock mutex
 
+	_ uint32 // ensure timeToRun has 8-byte alignment
+
 	// timeToRun is a distribution of scheduling latencies, defined
 	// as the sum of time a G spends in the _Grunnable state before
 	// it transitions to _Grunning.
-	//
-	// timeToRun is protected by sched.lock.
 	timeToRun timeHistogram
 }
 
@@ -1103,7 +1109,7 @@ type stkframe struct {
 // ancestorInfo records details of where a goroutine was started.
 type ancestorInfo struct {
 	pcs  []uintptr // pcs from the stack of this goroutine
-	goid int64     // goroutine id of this goroutine; original goroutine possibly dead
+	goid uint64    // goroutine id of this goroutine; original goroutine possibly dead
 	gopc uintptr   // pc of go statement that created this goroutine
 }
 

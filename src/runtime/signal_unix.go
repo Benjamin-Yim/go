@@ -356,7 +356,7 @@ func doSigPreempt(gp *g, ctxt *sigctxt) {
 	atomic.Store(&gp.m.signalPending, 0)
 
 	if GOOS == "darwin" || GOOS == "ios" {
-		atomic.Xadd(&pendingPreemptSignals, -1)
+		pendingPreemptSignals.Add(-1)
 	}
 }
 
@@ -381,7 +381,7 @@ func preemptM(mp *m) {
 
 	if atomic.Cas(&mp.signalPending, 0, 1) {
 		if GOOS == "darwin" || GOOS == "ios" {
-			atomic.Xadd(&pendingPreemptSignals, 1)
+			pendingPreemptSignals.Add(1)
 		}
 
 		// If multiple threads are preempting the same M, it may send many
@@ -460,7 +460,7 @@ func sigtrampgo(sig uint32, info *siginfo, ctx unsafe.Pointer) {
 			// The default behavior for sigPreempt is to ignore
 			// the signal, so badsignal will be a no-op anyway.
 			if GOOS == "darwin" || GOOS == "ios" {
-				atomic.Xadd(&pendingPreemptSignals, -1)
+				pendingPreemptSignals.Add(-1)
 			}
 			return
 		}
@@ -509,7 +509,7 @@ var sigprofCallersUse uint32
 //go:nosplit
 //go:nowritebarrierrec
 func sigprofNonGo(sig uint32, info *siginfo, ctx unsafe.Pointer) {
-	if prof.hz != 0 {
+	if prof.hz.Load() != 0 {
 		c := &sigctxt{info, ctx}
 		// Some platforms (Linux) have per-thread timers, which we use in
 		// combination with the process-wide timer. Avoid double-counting.
@@ -532,7 +532,7 @@ func sigprofNonGo(sig uint32, info *siginfo, ctx unsafe.Pointer) {
 //go:nosplit
 //go:nowritebarrierrec
 func sigprofNonGoPC(pc uintptr) {
-	if prof.hz != 0 {
+	if prof.hz.Load() != 0 {
 		stk := []uintptr{
 			pc,
 			abi.FuncPCABIInternal(_ExternalCode) + sys.PCQuantum,
