@@ -579,6 +579,8 @@ bad:
 // the top of a stack (for example, morestack calling newstack
 // calling the scheduler calling newm calling gc), so we must
 // record an argument size. For that purpose, it has no arguments.
+// 用户栈的扩张发生在 morestack 处，该函数此前会检查该调用是否正确的在用户栈上调用
+// 而后将 morebuf 设置为 f 的调用方，并将 G 的执行栈设置为 f 的 ctxt， 从而在 g0 上调用 newstack
 TEXT runtime·morestack(SB),NOSPLIT,$0-0
 	// 无法增长调度器的栈(m->g0)
 	get_tls(CX) // MOVQ TLS, CX

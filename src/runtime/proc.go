@@ -4340,7 +4340,8 @@ func malg(stacksize int32) *g {
 		// 在 Linux/Darwin 上（ _StackSystem == 0 ）本行不改变 stacksize 的大小
 		stacksize = round2(_StackSystem + stacksize) // 分配 2kb 栈
 		systemstack(func() {
-			newg.stack = stackalloc(uint32(stacksize)) // 正式分配栈
+			// 分配栈空间
+			newg.stack = stackalloc(uint32(stacksize))
 		})
 		newg.stackguard0 = newg.stack.lo + _StackGuard // 设置栈底
 		newg.stackguard1 = ^uintptr(0)                 // 栈顶初始化为 0

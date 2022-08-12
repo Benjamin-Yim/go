@@ -186,6 +186,9 @@ func stacklog2(n uintptr) int {
 // stackpool[order].item.mu held.
 // 从空闲池中分配一个栈，必须在持有 stackpool[order].item.mu 下调用
 func stackpoolalloc(order uint8) gclinkptr {
+	if debugSource {
+		println("执行栈分配：", order)
+	}
 	list := &stackpool[order].item.span
 	s := list.first // 链表头
 	lockWithRankMayAcquire(&mheap_.lock, lockRankMheap)
@@ -202,6 +205,7 @@ func stackpoolalloc(order uint8) gclinkptr {
 		if s.manualFreeList.ptr() != nil {
 			throw("bad manualFreeList")
 		}
+		// 成功分配到栈
 		osStackAlloc(s)
 		s.elemsize = _FixedStack << order
 		for i := uintptr(0); i < _StackCacheSize; i += s.elemsize {
@@ -215,10 +219,12 @@ func stackpoolalloc(order uint8) gclinkptr {
 	if x.ptr() == nil {
 		throw("span has no free stacks")
 	}
+	// 栈指针指向下一个
 	s.manualFreeList = x.ptr().next
 	s.allocCount++
 	if s.manualFreeList.ptr() == nil {
 		// all stacks in s are allocated.
+		// 当前 span 空间使用没了
 		// s 中所有的栈都被分配了
 		list.remove(s)
 	}
@@ -280,7 +286,9 @@ func stackcacherefill(c *mcache, order uint8) {
 	var list gclinkptr
 	var size uintptr
 	lock(&stackpool[order].item.mu)
+	// 遍历填充栈缓存池
 	for size < _StackCacheSize/2 {
+		// 依旧从 span 中获取
 		x := stackpoolalloc(order)
 		x.ptr().next = list
 		list = x
@@ -381,7 +389,7 @@ func stackalloc(n uint32) stack {
 			n2 >>= 1
 		}
 		var x gclinkptr // 两者有什么区别？？？？
-		// 决定是否从 stackpool 中分配
+		// 决定是否从全局 stackpool 中分配
 		if stackNoCache != 0 || thisg.m.p == 0 || thisg.m.preemptoff != "" {
 			// thisg.m.p == 0 can happen in the guts of exitsyscall
 			// or procresize. Just get a stack from the global pool.
@@ -393,7 +401,7 @@ func stackalloc(n uint32) stack {
 			x = stackpoolalloc(order) // 从栈池中分配一个栈
 			unlock(&stackpool[order].item.mu)
 		} else {
-			// 从对应链表提取可复用的空间
+			// 从对应 p 缓存池中提取可复用的空间
 			c := thisg.m.p.ptr().mcache
 			x = c.stackcache[order].list // 从栈空闲列表中分配栈空间
 			if x.ptr() == nil {          // 没有就从缓存池中，填充一个
