@@ -578,6 +578,7 @@ type m struct {
 	newSigstack   bool // 在一个C 线程被调用 sigaltstack. minit on C thread called sigaltstack
 	printlock     int8
 	incgo         bool   // m 执行 cgo 调用. m is executing a cgo call
+	isextra       bool   // m is an extra m
 	freeWait      uint32 // 如果等0，安全的释放 g0 并且进行原子的删除m. if == 0, safe to free g0 and delete m (atomic)
 	fastrand      uint64
 	needextram    bool
@@ -868,8 +869,8 @@ type schedt struct {
 	// 系统goroutine的数量，自动更新
 	ngsys atomic.Int32 // number of system goroutines
 	// 由空闲的 p 结构体对象组成的链表
-	pidle        puintptr      // 空闲 p 链表. idle p's
-	npidle       atomic.Int32  // n 个 p 处于空闲的状态
+	pidle        puintptr // 空闲 p 链表. idle p's
+	npidle       atomic.Int32// n 个 p 处于空闲的状态
 	nmspinning   atomic.Int32  // m 处理自旋的状态。 See "Worker thread parking/unparking" comment in proc.go.
 	needspinning atomic.Uint32 // See "Delicate dance" comment in proc.go. Boolean. Must hold sched.lock to set to 1.
 

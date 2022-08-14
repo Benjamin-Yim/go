@@ -1887,14 +1887,6 @@ func checkShouldTest() {
 	assert(shouldTest("// +build !windows !plan9", "windows", "amd64"))
 }
 
-func getenv(key, def string) string {
-	value := os.Getenv(key)
-	if value != "" {
-		return value
-	}
-	return def
-}
-
 // overlayDir makes a minimal-overhead copy of srcRoot in which new files may be added.
 func overlayDir(dstRoot, srcRoot string) error {
 	dstRoot = filepath.Clean(dstRoot)
@@ -1984,6 +1976,7 @@ var types2Failures32Bit = setOf(
 )
 
 var go118Failures = setOf(
+	"fixedbugs/issue53702.go",  // 1.18 compiler failed with "Value live at entry" error
 	"fixedbugs/issue54343.go",  // 1.18 compiler assigns receiver parameter to global variable
 	"typeparam/nested.go",      // 1.18 compiler doesn't support function-local types with generics
 	"typeparam/issue51521.go",  // 1.18 compiler produces bad panic message and link error

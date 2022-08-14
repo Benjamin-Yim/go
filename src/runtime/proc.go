@@ -2017,12 +2017,21 @@ func oneNewExtraM() {
 	casgstatus(gp, _Gidle, _Gdead)
 	gp.m = mp
 	mp.curg = gp
+	mp.isextra = true
 	mp.lockedInt++
 	mp.lockedg.set(gp)
 	gp.lockedm.set(mp)
 	gp.goid = sched.goidgen.Add(1)
 	if raceenabled {
 		gp.racectx = racegostart(abi.FuncPCABIInternal(newextram) + sys.PCQuantum)
+	}
+	if trace.enabled {
+		// trigger two trace events for the locked g in the extra m,
+		// since the next event of the g will be traceEvGoSysExit in exitsyscall,
+		// while calling from C thread to Go.
+		traceGoCreate(gp, 0) // no start pc
+		gp.traceseq++
+		traceEvent(traceEvGoInSyscall, -1, gp.goid)
 	}
 	// put on allg for garbage collector
 	// 给垃圾回收器使用
@@ -6439,7 +6448,7 @@ func runqget(pp *p) (gp *g, inheritTime bool) {
 	next := pp.runnext
 	// If the runnext is non-0 and the CAS fails, it could only have been stolen by another P,
 	// because other Ps can race to set runnext to 0, but only the current P can set it to non-0.
-	// Hence, there's no need to retry this CAS if it falls.
+	// Hence, there's no need to retry this CAS if it fails.
 	// 如果 P 存在下一个将要运行的 G.就运行，并且将状态置空
 	if next != 0 && pp.runnext.cas(next, 0) {
 		return next.ptr(), true
