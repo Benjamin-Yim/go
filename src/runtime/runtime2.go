@@ -459,12 +459,12 @@ type g struct {
 	//    stack may have moved in the meantime.
 	// 3. By debugCallWrap to pass parameters to a new goroutine because allocating a
 	//    closure in the runtime is forbidden.
-	param        unsafe.Pointer  // wakeup唤醒时传递的参数
-	atomicstatus uint32 //  g的当前状态,状态 Gidle,Grunnable,Grunning,Gsyscall,Gwaiting,Gdead
-	stackLock    uint32 // sigprof/scang lock; TODO: fold in to atomicstatus
+	param        unsafe.Pointer // wakeup唤醒时传递的参数
+	atomicstatus uint32         //  g的当前状态,状态 Gidle,Grunnable,Grunning,Gsyscall,Gwaiting,Gdead
+	stackLock    uint32         // sigprof/scang lock; TODO: fold in to atomicstatus
 	goid         uint64
-	schedlink    guintptr // 指向全局运行队列中的下一个g，所有位于全局运行队列中的g形成一个链表
-	waitsince    int64       // 阻塞时长.  approx time when the g become blocked
+	schedlink    guintptr   // 指向全局运行队列中的下一个g，所有位于全局运行队列中的g形成一个链表
+	waitsince    int64      // 阻塞时长.  approx time when the g become blocked
 	waitreason   waitReason // g被阻塞的原因. if status==Gwaiting
 	// 如果需要抢占调度，设置preempt为true. 执行 stackguard0 = stackpreempt，
 	preempt       bool // preemption signal, duplicates stackguard0 = stackpreempt
@@ -853,24 +853,24 @@ type schedt struct {
 	// sure to call checkdead().
 
 	// 由空闲的工作线程组成的链表
-	midle        muintptr // idle m's waiting for work
+	midle muintptr // idle m's waiting for work
 	// 空闲的工作线程的数量
-	nmidle       int32    // number of idle m's waiting for work
+	nmidle int32 // number of idle m's waiting for work
 	// 空闲的且被 lock 的 m 计数
-	nmidlelocked int32    // number of locked m's waiting for work
+	nmidlelocked int32 // number of locked m's waiting for work
 	// 已经创建的多个m，下一个m id
-	mnext        int64    // number of m's that have been created and next M ID
+	mnext int64 // number of m's that have been created and next M ID
 	// 被允许创建的最大m线程数量
-	maxmcount    int32    // maximum number of m's allowed (or die)
-	nmsys        int32    // number of system m's not counted for deadlock
+	maxmcount int32 // maximum number of m's allowed (or die)
+	nmsys     int32 // number of system m's not counted for deadlock
 	// 累积空闲的m数量
-	nmfreed      int64    // cumulative number of freed m's
+	nmfreed int64 // cumulative number of freed m's
 	// 系统goroutine的数量，自动更新
 	ngsys atomic.Int32 // number of system goroutines
 	// 由空闲的 p 结构体对象组成的链表
-	pidle        puintptr // 空闲 p 链表. idle p's
-	npidle       atomic.Int32// n 个 p 处于空闲的状态
-	nmspinning   atomic.Int32 // m 处理自旋的状态。 See "Worker thread parking/unparking" comment in proc.go.
+	pidle        puintptr      // 空闲 p 链表. idle p's
+	npidle       atomic.Int32  // n 个 p 处于空闲的状态
+	nmspinning   atomic.Int32  // m 处理自旋的状态。 See "Worker thread parking/unparking" comment in proc.go.
 	needspinning atomic.Uint32 // See "Delicate dance" comment in proc.go. Boolean. Must hold sched.lock to set to 1.
 
 	// Global runnable queue.
@@ -1094,15 +1094,15 @@ type _panic struct {
 
 // stack traces
 type stkframe struct {
-	fn       funcInfo   // function being run
-	pc       uintptr    // program counter within fn
+	fn       funcInfo   // 将要运行的方法。function being run
+	pc       uintptr    // fn 的程序计数器。program counter within fn
 	continpc uintptr    // program counter where execution can continue, or 0 if not
 	lr       uintptr    // program counter at caller aka link register
-	sp       uintptr    // stack pointer at pc
-	fp       uintptr    // stack pointer at caller aka frame pointer
-	varp     uintptr    // top of local variables
-	argp     uintptr    // pointer to function arguments
-	arglen   uintptr    // number of bytes at argp
+	sp       uintptr    // 栈指针。stack pointer at pc
+	fp       uintptr    // 帧指针。stack pointer at caller aka frame pointer
+	varp     uintptr    // 本地变量。top of local variables
+	argp     uintptr    // 方法参数的指针。pointer to function arguments
+	arglen   uintptr    // 参数长度字符数组。number of bytes at argp
 	argmap   *bitvector // force use of this argmap
 }
 

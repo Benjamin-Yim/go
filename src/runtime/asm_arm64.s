@@ -275,15 +275,15 @@ noswitch:
 // calling the scheduler calling newm calling gc), so we must
 // record an argument size. For that purpose, it has no arguments.
 TEXT runtime·morestack(SB),NOSPLIT|NOFRAME,$0-0
-	// Cannot grow scheduler stack (m->g0).
-	MOVD	g_m(g), R8
-	MOVD	m_g0(R8), R4
-	CMP	g, R4
+	// 不能增长 g0 的栈空间。Cannot grow scheduler stack (m->g0).
+	MOVD	g_m(g), R8 // 获取当前 g  的 m
+	MOVD	m_g0(R8), R4 // 获取当前 m->g0
+	CMP	g, R4 // 比较当前 g 和 g0
 	BNE	3(PC)
 	BL	runtime·badmorestackg0(SB)
 	B	runtime·abort(SB)
 
-	// Cannot grow signal stack (m->gsignal).
+	// 不能增长 signal 栈。Cannot grow signal stack (m->gsignal).
 	MOVD	m_gsignal(R8), R4
 	CMP	g, R4
 	BNE	3(PC)
@@ -313,6 +313,7 @@ TEXT runtime·morestack(SB),NOSPLIT|NOFRAME,$0-0
 	MOVD	R0, RSP
 	MOVD	(g_sched+gobuf_bp)(g), R29
 	MOVD.W	$0, -16(RSP)	// create a call frame on g0 (saved LR; keep 16-aligned)
+	// 调用runtime.newstack完成栈扩容
 	BL	runtime·newstack(SB)
 
 	// Not reached, but make sure the return PC from the call to newstack

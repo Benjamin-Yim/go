@@ -959,7 +959,7 @@ func copystack(gp *g, newsize uintptr) {
 	}
 
 	// Swap out old stack for new one
-	// 为新栈置换出旧栈
+	// 切换到新栈
 	gp.stack = new
 	gp.stackguard0 = new.lo + _StackGuard // NOTE: might clobber a preempt request
 	gp.sched.sp = new.hi - used

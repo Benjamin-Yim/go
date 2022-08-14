@@ -36,6 +36,7 @@ func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max in
 	}
 
 	// Don't call this "g"; it's too easy get "g" and "gp" confused.
+	// 当前要调整的 g 就是当前正在运行的 g ，就抛出异常，不允许调整。
 	if ourg := getg(); ourg == gp && ourg == ourg.m.curg {
 		// The starting sp has been passed in as a uintptr, and the caller may
 		// have other uintptr-typed stack references as well.
