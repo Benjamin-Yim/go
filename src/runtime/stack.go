@@ -670,8 +670,11 @@ func adjustpointers(scanp unsafe.Pointer, bv *bitvector, adjinfo *adjustinfo, f 
 }
 
 // Note: the argument/return area is adjusted by the callee.
+// frame 栈上下文位置
+// arg 调整幅度
 func adjustframe(frame *stkframe, arg unsafe.Pointer) bool {
 	adjinfo := (*adjustinfo)(arg)
+	// 不需要调整
 	if frame.continpc == 0 {
 		// Frame is dead.
 		return true
@@ -680,13 +683,14 @@ func adjustframe(frame *stkframe, arg unsafe.Pointer) bool {
 	if stackDebug >= 2 {
 		print("    adjusting ", funcname(f), " frame=[", hex(frame.sp), ",", hex(frame.fp), "] pc=", hex(frame.pc), " continpc=", hex(frame.continpc), "\n")
 	}
+	// 方法是系统栈切换
 	if f.funcID == funcID_systemstack_switch {
 		// A special routine at the bottom of stack of a goroutine that does a systemstack call.
 		// We will allow it to be copied even though we don't
 		// have full GC info for it (because it is written in asm).
 		return true
 	}
-
+	// 获取栈帧中的信息：本地变量、参数、对象
 	locals, args, objs := getStackMap(frame, &adjinfo.cache, true)
 
 	// Adjust local variables if stack frame has been allocated.
@@ -749,6 +753,7 @@ func adjustframe(frame *stkframe, arg unsafe.Pointer) bool {
 			}
 			for i := uintptr(0); i < ptrdata; i += goarch.PtrSize {
 				if *addb(gcdata, i/(8*goarch.PtrSize))>>(i/goarch.PtrSize&7)&1 != 0 {
+					// 调整指针，根据调整幅度加减指针的位置
 					adjustpointer(adjinfo, unsafe.Pointer(p+i))
 				}
 			}

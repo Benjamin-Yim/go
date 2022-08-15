@@ -30,6 +30,10 @@ const usesLR = sys.MinFrameSize > 0
 // The skip argument is only valid with pcbuf != nil and counts the number
 // of logical frames to skip rather than physical frames (with inlining, a
 // PC in pcbuf can represent multiple calls).
+// pcbuf 当前执行的上下文
+// max ??
+// callback 调整指针将要回调的方法
+// v 调整幅度
 func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max int, callback func(*stkframe, unsafe.Pointer) bool, v unsafe.Pointer, flags uint) int {
 	if skip > 0 && callback != nil {
 		throw("gentraceback callback cannot be used with non-zero skip")
@@ -111,7 +115,8 @@ func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max in
 		frame.pc = frame.lr
 		frame.lr = 0
 	}
-
+	// 当前执行点因为调用了其他方法所以需要栈检测
+	// 所以需要获取栈方法地址
 	f := findfunc(frame.pc)
 	if !f.valid() {
 		if callback != nil || printing {

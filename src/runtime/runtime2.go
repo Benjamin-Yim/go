@@ -844,9 +844,6 @@ type schedt struct {
 	goidgen   atomic.Uint64
 	lastpoll  atomic.Int64 // 上次网络轮询的时间,如果当前正在轮询,则为0. time of last network poll, 0 if currently polling
 	pollUntil atomic.Int64 // 当前轮询休眠的时间. time to which current poll is sleeping
-	goidgen   atomic.Uint64
-	lastpoll  atomic.Int64 // time of last network poll, 0 if currently polling
-	pollUntil atomic.Int64 // time to which current poll is sleeping
 
 	lock mutex
 
@@ -869,8 +866,8 @@ type schedt struct {
 	// 系统goroutine的数量，自动更新
 	ngsys atomic.Int32 // number of system goroutines
 	// 由空闲的 p 结构体对象组成的链表
-	pidle        puintptr // 空闲 p 链表. idle p's
-	npidle       atomic.Int32// n 个 p 处于空闲的状态
+	pidle        puintptr      // 空闲 p 链表. idle p's
+	npidle       atomic.Int32  // n 个 p 处于空闲的状态
 	nmspinning   atomic.Int32  // m 处理自旋的状态。 See "Worker thread parking/unparking" comment in proc.go.
 	needspinning atomic.Uint32 // See "Delicate dance" comment in proc.go. Boolean. Must hold sched.lock to set to 1.
 
@@ -1097,11 +1094,11 @@ type _panic struct {
 type stkframe struct {
 	fn       funcInfo   // 将要运行的方法。function being run
 	pc       uintptr    // fn 的程序计数器。program counter within fn
-	continpc uintptr    // program counter where execution can continue, or 0 if not
-	lr       uintptr    // program counter at caller aka link register
+	continpc uintptr    // 可以继续执行的程序计数器，否则为 0. program counter where execution can continue, or 0 if not
+	lr       uintptr    // 调用者的程序计数器又名链接寄存器. program counter at caller aka link register
 	sp       uintptr    // 栈指针。stack pointer at pc
 	fp       uintptr    // 帧指针。stack pointer at caller aka frame pointer
-	varp     uintptr    // 本地变量。top of local variables
+	varp     uintptr    // 局部变量的顶部。top of local variables
 	argp     uintptr    // 方法参数的指针。pointer to function arguments
 	arglen   uintptr    // 参数长度字符数组。number of bytes at argp
 	argmap   *bitvector // force use of this argmap

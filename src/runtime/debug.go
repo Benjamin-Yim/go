@@ -114,10 +114,10 @@ func mayMoreStackMove() {
 	}
 }
 
-func G_id() int64 {
+func G_id() uint64 {
 	curG := getg()
 	if curG.m.curg != curG {
-		return -1
+		return 0
 	}
 	return curG.goid
 }
