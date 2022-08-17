@@ -578,7 +578,6 @@ type m struct {
 	newSigstack   bool // 在一个C 线程被调用 sigaltstack. minit on C thread called sigaltstack
 	printlock     int8
 	incgo         bool   // m 执行 cgo 调用. m is executing a cgo call
-	isextra       bool   // m is an extra m
 	freeWait      uint32 // 如果等0，安全的释放 g0 并且进行原子的删除m. if == 0, safe to free g0 and delete m (atomic)
 	fastrand      uint64
 	needextram    bool
