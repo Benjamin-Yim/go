@@ -31,6 +31,7 @@ func main() {
 			fmt.Println("=============================================================goroutine nums:", runtime.NumGoroutine())
 		}
 	}()
+
 	fmt.Println("Hello World")
 	select {}
 }
