@@ -1470,9 +1470,6 @@ func (s *state) stmt(n ir.Node) {
 				s.Fatalf("dottype of non-load")
 			}
 			mem := s.mem()
-			if mem.Op == ssa.OpVarKill {
-				mem = mem.Args[0]
-			}
 			if res.Args[1] != mem {
 				s.Fatalf("memory no longer live from 2-result dottype load")
 			}
@@ -1741,12 +1738,9 @@ func (s *state) stmt(n ir.Node) {
 		b.Pos = s.lastPos.WithIsStmt() // Do this even if b is an empty block.
 		b.AddEdgeTo(to)
 
-	case ir.OFOR, ir.OFORUNTIL:
+	case ir.OFOR:
 		// OFOR: for Ninit; Left; Right { Nbody }
 		// cond (Left); body (Nbody); incr (Right)
-		//
-		// OFORUNTIL: for Ninit; Left; Right; List { Nbody }
-		// => body: { Nbody }; incr: Right; if Left { lateincr: List; goto body }; end:
 		n := n.(*ir.ForStmt)
 		bCond := s.f.NewBlock(ssa.BlockPlain)
 		bBody := s.f.NewBlock(ssa.BlockPlain)
@@ -1756,21 +1750,17 @@ func (s *state) stmt(n ir.Node) {
 		// ensure empty for loops have correct position; issue #30167
 		bBody.Pos = n.Pos()
 
-		// first, jump to condition test (OFOR) or body (OFORUNTIL)
+		// first, jump to condition test
 		b := s.endBlock()
-		if n.Op() == ir.OFOR {
-			b.AddEdgeTo(bCond)
-			// generate code to test condition
-			s.startBlock(bCond)
-			if n.Cond != nil {
-				s.condBranch(n.Cond, bBody, bEnd, 1)
-			} else {
-				b := s.endBlock()
-				b.Kind = ssa.BlockPlain
-				b.AddEdgeTo(bBody)
-			}
+		b.AddEdgeTo(bCond)
 
+		// generate code to test condition
+		s.startBlock(bCond)
+		if n.Cond != nil {
+			s.condBranch(n.Cond, bBody, bEnd, 1)
 		} else {
+			b := s.endBlock()
+			b.Kind = ssa.BlockPlain
 			b.AddEdgeTo(bBody)
 		}
 
@@ -1804,29 +1794,18 @@ func (s *state) stmt(n ir.Node) {
 			b.AddEdgeTo(bIncr)
 		}
 
-		// generate incr (and, for OFORUNTIL, condition)
+		// generate incr
 		s.startBlock(bIncr)
 		if n.Post != nil {
 			s.stmt(n.Post)
 		}
-		if n.Op() == ir.OFOR {
-			if b := s.endBlock(); b != nil {
-				b.AddEdgeTo(bCond)
-				// It can happen that bIncr ends in a block containing only VARKILL,
-				// and that muddles the debugging experience.
-				if b.Pos == src.NoXPos {
-					b.Pos = bCond.Pos
-				}
+		if b := s.endBlock(); b != nil {
+			b.AddEdgeTo(bCond)
+			// It can happen that bIncr ends in a block containing only VARKILL,
+			// and that muddles the debugging experience.
+			if b.Pos == src.NoXPos {
+				b.Pos = bCond.Pos
 			}
-		} else {
-			// bCond is unused in OFORUNTIL, so repurpose it.
-			bLateIncr := bCond
-			// test condition
-			s.condBranch(n.Cond, bLateIncr, bEnd, 1)
-			// generate late increment
-			s.startBlock(bLateIncr)
-			s.stmtList(n.Late)
-			s.endBlock().AddEdgeTo(bBody)
 		}
 
 		s.startBlock(bEnd)
@@ -1957,15 +1936,6 @@ func (s *state) stmt(n ir.Node) {
 		n := n.(*ir.UnaryExpr)
 		if !s.canSSA(n.X) {
 			s.vars[memVar] = s.newValue1Apos(ssa.OpVarDef, types.TypeMem, n.X.(*ir.Name), s.mem(), false)
-		}
-	case ir.OVARKILL:
-		// Insert a varkill op to record that a variable is no longer live.
-		// We only care about liveness info at call sites, so putting the
-		// varkill in the store chain is enough to keep it correctly ordered
-		// with respect to call ops.
-		n := n.(*ir.UnaryExpr)
-		if !s.canSSA(n.X) {
-			s.vars[memVar] = s.newValue1Apos(ssa.OpVarKill, types.TypeMem, n.X.(*ir.Name), s.mem(), false)
 		}
 
 	case ir.OVARLIVE:
@@ -6464,7 +6434,6 @@ func (s *state) dottype1(pos src.XPos, src, dst *types.Type, iface, source, targ
 		delete(s.vars, valVar)
 	} else {
 		res = s.load(dst, addr)
-		s.vars[memVar] = s.newValue1A(ssa.OpVarKill, types.TypeMem, tmp.(*ir.Name), s.mem())
 	}
 	resok = s.variable(okVar, types.Types[types.TBOOL])
 	delete(s.vars, okVar)
@@ -6957,7 +6926,7 @@ func genssa(f *ssa.Func, pp *objw.Progs) {
 			case ssa.OpGetG:
 				// nothing to do when there's a g register,
 				// and checkLower complains if there's not
-			case ssa.OpVarDef, ssa.OpVarLive, ssa.OpKeepAlive, ssa.OpVarKill:
+			case ssa.OpVarDef, ssa.OpVarLive, ssa.OpKeepAlive:
 				// nothing to do; already used by liveness
 			case ssa.OpPhi:
 				CheckLoweredPhi(v)

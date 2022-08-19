@@ -904,13 +904,13 @@ const freezeStopWait = 0x7fffffff
 
 // freezing is set to non-zero if the runtime is trying to freeze the
 // world.
-var freezing uint32
+var freezing atomic.Bool
 
 // Similar to stopTheWorld but best-effort and can be called several times.
 // There is no reverse operation, used during crashing.
 // This function must not lock any mutexes.
 func freezetheworld() {
-	atomic.Store(&freezing, 1)
+	freezing.Store(true)
 	// stopwait and preemption requests can be lost
 	// due to races with concurrently executing threads,
 	// so try several times
@@ -1285,7 +1285,7 @@ func stopTheWorldWithSema() {
 			}
 		}
 	}
-	if atomic.Load(&freezing) != 0 {
+	if freezing.Load() {
 		// Some other thread is panicking. This can cause the
 		// sanity checks above to fail if the panic happens in
 		// the signal handler on a stopped thread. Either way,
@@ -1635,7 +1635,7 @@ found:
 	if GOOS == "darwin" || GOOS == "ios" {
 		// Make sure pendingPreemptSignals is correct when an M exits.
 		// For #41702.
-		if atomic.Load(&mp.signalPending) != 0 {
+		if mp.signalPending.Load() != 0 {
 			pendingPreemptSignals.Add(-1)
 		}
 	}
@@ -3576,8 +3576,8 @@ func dropg() {
 func checkTimers(pp *p, now int64) (rnow, pollUntil int64, ran bool) {
 	// If it's not yet time for the first timer, or the first adjusted
 	// timer, then there is nothing to do.
-	next := int64(atomic.Load64(&pp.timer0When))
-	nextAdj := int64(atomic.Load64(&pp.timerModifiedEarliest))
+	next := pp.timer0When.Load()
+	nextAdj := pp.timerModifiedEarliest.Load()
 	if next == 0 || (nextAdj != 0 && nextAdj < next) {
 		next = nextAdj
 	}
@@ -4928,7 +4928,7 @@ func sigprof(pc, sp, lr uintptr, gp *g, mp *m) {
 		// cgoCallers.  We are running in a signal handler
 		// with all signals blocked, so we don't have to worry
 		// about any other code interrupting us.
-		if atomic.Load(&mp.cgoCallersUse) == 0 && mp.cgoCallers != nil && mp.cgoCallers[0] != 0 {
+		if mp.cgoCallersUse.Load() == 0 && mp.cgoCallers != nil && mp.cgoCallers[0] != 0 {
 			for cgoOff < len(mp.cgoCallers) && mp.cgoCallers[cgoOff] != 0 {
 				cgoOff++
 			}
@@ -5116,7 +5116,7 @@ func (pp *p) destroy() {
 		pp.timers = nil
 		pp.numTimers = 0
 		pp.deletedTimers = 0
-		atomic.Store64(&pp.timer0When, 0)
+		pp.timer0When.Store(0)
 		unlock(&pp.timersLock)
 		unlock(&plocal.timersLock)
 	}

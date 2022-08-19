@@ -233,7 +233,7 @@ func (s *mspan) markBitsForIndex(objIndex uintptr) markBits {
 }
 
 func (s *mspan) markBitsForBase() markBits {
-	return markBits{(*uint8)(s.gcmarkBits), uint8(1), 0}
+	return markBits{&s.gcmarkBits.x, uint8(1), 0}
 }
 
 // isMarked reports whether mark bit m is set.
@@ -477,12 +477,14 @@ func (h heapBits) next() (heapBits, uintptr) {
 // nextFast is like next, but can return 0 even when there are more pointers
 // to be found. Callers should call next if nextFast returns 0 as its second
 // return value.
-//     if addr, h = h.nextFast(); addr == 0 {
-//         if addr, h = h.next(); addr == 0 {
-//             ... no more pointers ...
-//         }
-//     }
-//     ... process pointer at addr ...
+//
+//	if addr, h = h.nextFast(); addr == 0 {
+//	    if addr, h = h.next(); addr == 0 {
+//	        ... no more pointers ...
+//	    }
+//	}
+//	... process pointer at addr ...
+//
 // nextFast is designed to be inlineable.
 //
 //go:nosplit

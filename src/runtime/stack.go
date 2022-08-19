@@ -145,8 +145,8 @@ var stackpool [_NumStackOrders]struct {
 	_    [cpu.CacheLinePadSize - unsafe.Sizeof(stackpoolItem{})%cpu.CacheLinePadSize]byte
 }
 
-//go:notinheap
 type stackpoolItem struct {
+	_    sys.NotInHeap
 	mu   mutex
 	span mSpanList
 }
@@ -925,7 +925,7 @@ func copystack(gp *g, newsize uintptr) {
 	// 调整 sudogs, 必要时与 channel 操作同步
 	ncopy := used
 	if !gp.activeStackChans {
-		if newsize < old.hi-old.lo && atomic.Load8(&gp.parkingOnChan) != 0 {
+		if newsize < old.hi-old.lo && gp.parkingOnChan.Load() {
 			// It's not safe for someone to shrink this stack while we're actively
 			// parking on a channel, but it is safe to grow since we do that
 			// ourselves and explicitly don't want to synchronize with channels
@@ -1226,7 +1226,7 @@ func isShrinkStackSafe(gp *g) bool {
 	// We also can't *shrink* the stack in the window between the
 	// goroutine calling gopark to park on a channel and
 	// gp.activeStackChans being set.
-	return gp.syscallsp == 0 && !gp.asyncSafePoint && atomic.Load8(&gp.parkingOnChan) == 0
+	return gp.syscallsp == 0 && !gp.asyncSafePoint && !gp.parkingOnChan.Load()
 }
 
 // Maybe shrink the stack being used by gp.

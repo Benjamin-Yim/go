@@ -486,8 +486,8 @@ type g struct {
 	activeStackChans bool // 表示是否有未加锁定的channel指向到了g 栈，如果为true,那么对栈的复制需要channal锁来保护这些区域
 	// parkingOnChan indicates that the goroutine is about to
 	// park on a chansend or chanrecv. Used to signal an unsafe point
-	// for stack shrinking. It's a boolean value, but is updated atomically.
-	parkingOnChan uint8 // 表示g 是放在chansend 还是 chanrecv。用于栈的收缩，是一个布尔值，但是原子性更新
+	// for stack shrinking.
+	parkingOnChan atomic.Bool  // 表示g 是放在chansend 还是 chanrecv。用于栈的收缩，是一个布尔值，但是原子性更新
 
 	raceignore     int8     // ignore race detection events
 	sysblocktraced bool     // StartTrace has emitted EvGoInSyscall about this goroutine
@@ -582,20 +582,20 @@ type m struct {
 	fastrand      uint64
 	needextram    bool
 	traceback     uint8
-	ncgocall      uint64                        // cgo 调用总数. number of cgo calls in total
-	ncgo          int32                         // 当前正在调用 cgo 的总数. number of cgo calls currently in progress
-	cgoCallersUse uint32                        // 如果不为零，则暂时使用cgoCallers。if non-zero, cgoCallers in use temporarily
-	cgoCallers    *cgoCallers                   // 如果在调用cgo时出现崩溃，则会出现cgo跟踪记录。cgo traceback if crashing in cgo call
-	park          note                          //  M休眠时使用的信号量, 唤醒M时会通过它唤醒
-	alllink       *m                            // 记录所有工作线程的链表。on allm
-	schedlink     muintptr                      // 下一个m, 当m在链表结构中会使用
-	lockedg       guintptr                      // 当前M锁定的G。lockedm的对应值
-	createstack   [32]uintptr                   // 创建此线程的堆栈。stack that created this thread.
-	lockedExt     uint32                        // 对外部LockOSThread的跟踪。tracking for external LockOSThread
-	lockedInt     uint32                        // 对内部lockOSThread的跟踪。tracking for internal lockOSThread
-	nextwaitm     muintptr                      // 下一个 m 将等待锁 next m waiting for lock
+	ncgocall      uint64        // cgo 调用总数. number of cgo calls in total
+	ncgo          int32         // 当前正在调用 cgo 的总数. number of cgo calls currently in progress
+	cgoCallersUse atomic.Uint32 // 如果不为零，则暂时使用cgoCallers。if non-zero, cgoCallers in use temporarily
+	cgoCallers    *cgoCallers   // 如果在调用cgo时出现崩溃，则会出现cgo跟踪记录。cgo traceback if crashing in cgo call
+	park          note			//  M休眠时使用的信号量, 唤醒M时会通过它唤醒
+	alllink       *m 			// 记录所有工作线程的链表。on allm
+	schedlink     muintptr		// 下一个m, 当m在链表结构中会使用
+	lockedg       guintptr		// 当前M锁定的G。lockedm的对应值
+	createstack   [32]uintptr // 创建此线程的堆栈。stack that created this thread.
+	lockedExt     uint32      // 对外部LockOSThread的跟踪。tracking for external LockOSThread
+	lockedInt     uint32      // 对内部lockOSThread的跟踪。tracking for internal lockOSThread
+	nextwaitm     muintptr    // 下一个 m 将等待锁 next m waiting for lock
 	waitunlockf   func(*g, unsafe.Pointer) bool // 等待解锁函数
-	waitlock      unsafe.Pointer                // 等待锁
+	waitlock      unsafe.Pointer		// 等待锁
 	waittraceev   byte
 	waittraceskip int
 	startingtrace bool
@@ -615,13 +615,12 @@ type m struct {
 
 	// preemptGen counts the number of completed preemption
 	// signals. This is used to detect when a preemption is
-	// requested, but fails. Accessed atomically.
-	preemptGen uint32 // 完成的抢占信号数量。这用于检测何时请求抢占，但是失败了。原子访问
+	// requested, but fails.
+	preemptGen atomic.Uint32 // 完成的抢占信号数量。这用于检测何时请求抢占，但是失败了。原子访问
 
 	// Whether this is a pending preemption signal on this M.
-	// Accessed atomically.
 	// 是不是当前M上挂起的抢占信号
-	signalPending uint32
+	signalPending atomic.Uint32
 
 	dlogPerM
 
@@ -714,26 +713,22 @@ type p struct {
 
 	palloc persistentAlloc // per-P to avoid mutex
 
-	_ uint32 // Alignment for atomic fields below
-
 	// The when field of the first entry on the timer heap.
-	// This is updated using atomic functions.
 	// This is 0 if the timer heap is empty.
 	// 计时器堆上第一个条目的when字段。
 	// 这是使用原子函数更新的。
 	// 如果计时器堆为空，则为0。
-	timer0When uint64
+	timer0When atomic.Int64
 
 	// The earliest known nextwhen field of a timer with
 	// timerModifiedEarlier status. Because the timer may have been
 	// modified again, there need not be any timer with this value.
-	// This is updated using atomic functions.
 	// This is 0 if there are no timerModifiedEarlier timers.
 	// 具有timerModifiedEarlier状态的计时器的已知最早的nextwhen字段。
 	// 由于计时器可能已再次修改，因此不需要任何具有此值的计时器。
 	// 这是用原子函数更新的。
 	// 如果没有 timerModifiedEarlier 计时器，这个值就是 0。
-	timerModifiedEarliest uint64
+	timerModifiedEarliest atomic.Int64
 
 	// Per-P GC state
 	gcAssistTime         int64 // Nanoseconds in assistAlloc
