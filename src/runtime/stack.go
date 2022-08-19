@@ -1348,7 +1348,7 @@ func getStackMap(frame *stkframe, cache *pcvalueCache, debug bool) (locals, args
 		// at the function prologue, assume so and hope for the best.
 		pcdata = 0
 	}
-
+	// 局部变量
 	// Local variables.
 	size := frame.varp - frame.sp
 	var minsize uintptr
@@ -1359,6 +1359,7 @@ func getStackMap(frame *stkframe, cache *pcvalueCache, debug bool) (locals, args
 		minsize = sys.MinFrameSize
 	}
 	if size > minsize {
+		// 说明有参数
 		stackid := pcdata
 		stkmap := (*stackmap)(funcdata(f, _FUNCDATA_LocalsPointerMaps))
 		if stkmap == nil || stkmap.n <= 0 {
@@ -1380,7 +1381,7 @@ func getStackMap(frame *stkframe, cache *pcvalueCache, debug bool) (locals, args
 			print("      no locals to adjust\n")
 		}
 	}
-
+	// 参数指针处理
 	// Arguments.
 	if frame.arglen > 0 {
 		if frame.argmap != nil {
@@ -1408,7 +1409,7 @@ func getStackMap(frame *stkframe, cache *pcvalueCache, debug bool) (locals, args
 			}
 		}
 	}
-
+	// 栈对象处理
 	// stack objects.
 	if (GOARCH == "amd64" || GOARCH == "arm64" || GOARCH == "ppc64" || GOARCH == "ppc64le" || GOARCH == "riscv64") &&
 		unsafe.Sizeof(abi.RegArgs{}) > 0 && frame.argmap != nil {

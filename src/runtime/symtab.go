@@ -1096,6 +1096,8 @@ func pcdatavalue2(f funcInfo, table uint32, targetpc uintptr) (int32, uintptr) {
 
 // funcdata returns a pointer to the ith funcdata for f.
 // funcdata should be kept in sync with cmd/link:writeFuncs.
+// funcdata 返回一个指向f的第一个funcdata的指针。
+// funcdata 应与cmd/link:writeFuncs保持同步。
 func funcdata(f funcInfo, i uint8) unsafe.Pointer {
 	if i < 0 || i >= f.nfuncdata {
 		return nil
