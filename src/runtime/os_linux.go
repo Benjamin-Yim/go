@@ -58,6 +58,8 @@ const (
 // Might be woken up spuriously; that's allowed.
 // Don't sleep longer than ns; ns < 0 means forever.
 //
+// 调用futex函数进入睡眠
+//
 //go:nosplit
 func futexsleep(addr *uint32, val uint32, ns int64) {
 	// Some Linux kernels have a bug where futex of
@@ -66,6 +68,7 @@ func futexsleep(addr *uint32, val uint32, ns int64) {
 	// here, and so can we: as it says a few lines up,
 	// spurious wakeups are allowed.
 	if ns < 0 {
+		//调用futex进入睡眠
 		futex(unsafe.Pointer(addr), _FUTEX_WAIT_PRIVATE, val, nil, nil, 0)
 		return
 	}
@@ -76,9 +79,11 @@ func futexsleep(addr *uint32, val uint32, ns int64) {
 }
 
 // If any procs are sleeping on addr, wake up at most cnt.
+// futexwakeup又继续调用包装了futex系统调用的futex函数来实现唤醒睡眠在内核中的工作线程
 //
 //go:nosplit
 func futexwakeup(addr *uint32, cnt uint32) {
+	//调用futex函数唤醒工作线程
 	ret := futex(unsafe.Pointer(addr), _FUTEX_WAKE_PRIVATE, cnt, nil, nil, 0)
 	if ret >= 0 {
 		return
@@ -149,12 +154,12 @@ const (
 	// In non-QEMU environments CLONE_SYSVSEM is inconsequential as we do not
 	// use System V semaphores.
 
-	cloneFlags = _CLONE_VM | /* share memory */
+	cloneFlags = _CLONE_VM | /* share memory */ //指定父子线程共享进程地址空间
 		_CLONE_FS | /* share cwd, etc */
 		_CLONE_FILES | /* share fd table */
 		_CLONE_SIGHAND | /* share sig handler table */
 		_CLONE_SYSVSEM | /* share SysV semaphore undo lists (see issue #20763) */
-		_CLONE_THREAD /* revisit - okay for now */
+		_CLONE_THREAD /* revisit - okay for now */ //创建子线程而不是子进程
 )
 
 //go:noescape

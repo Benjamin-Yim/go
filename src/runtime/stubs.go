@@ -37,6 +37,13 @@ func getg() *g
 // This must NOT be go:noescape: if fn is a stack-allocated closure,
 // fn puts g on a run queue, and g executes before fn returns, the
 // closure will be invalidated while it is still executing.
+//
+// 主要功能：
+//  1. 首先从当前运行的 g 切换到 g0。这一步包含了保存 g 的上下文信息。
+//     把 g0 设置到 TLS 中，修改 CPU 的 RSP 寄存器指向其 g0 的堆栈
+//  2. 以当前运行的 g 为参数调用 fn 函数
+//
+// 执行 g 切换到 g0 时，切换到栈的位置是指定的
 func mcall(fn func(*g))
 
 // systemstack runs fn on a system stack.

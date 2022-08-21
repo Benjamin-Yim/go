@@ -549,23 +549,28 @@ TEXT runtime·madvise(SB),NOSPLIT,$0
 // int64 futex(int32 *uaddr, int32 op, int32 val,
 //	struct timespec *timeout, int32 *uaddr2, int32 val2);
 TEXT runtime·futex(SB),NOSPLIT,$0
+    // 下面的6条指令在为futex系统调用准备参数
 	MOVQ	addr+0(FP), DI
 	MOVL	op+8(FP), SI
 	MOVL	val+12(FP), DX
 	MOVQ	ts+16(FP), R10
 	MOVQ	addr2+24(FP), R8
 	MOVL	val3+32(FP), R9
-	MOVL	$SYS_futex, AX
-	SYSCALL
-	MOVL	AX, ret+40(FP)
+	MOVL	$SYS_futex, AX // 系统调用编号放入AX寄存器
+	SYSCALL // 执行futex系统调用进入睡眠，从睡眠中被唤醒后接着执行下一条MOVL指令
+	MOVL	AX, ret+40(FP) // 保存系统调用的返回值
 	RET
 
 // int32 clone(int32 flags, void *stk, M *mp, G *gp, void (*fn)(void));
 TEXT runtime·clone(SB),NOSPLIT,$0
-	MOVL	flags+0(FP), DI
-	MOVQ	stk+8(FP), SI
-	MOVQ	$0, DX
-	MOVQ	$0, R10
+    // 第一个参数和第二个参数，分别用来指定内核创建线程时需要的选项和新线程应该使用的栈。
+    // 因为即将被创建的线程与当前线程共享同一个进程地址空间，所以这里必须为子线程指定其使用的栈，
+    // 否则父子线程会共享同一个栈从而造成混乱，从上面的newosproc函数可以看出，新线程使用的
+    // 栈为m.g0.stack.lo～m.g0.stack.hi这段内存，而这段内存是newm函数在创建m结构体对象时从进程的堆上分配而来的。
+	MOVL	flags+0(FP), DI //系统调用的第一个参数
+	MOVQ	stk+8(FP), SI  //系统调用的第二个参数
+	MOVQ	$0, DX  //第三个参数
+	MOVQ	$0, R10 //第四个参数
 	MOVQ    $0, R8
 	// Copy mp, gp, fn off parent stack for use by child.
 	// Careful: Linux system call clobbers CX and R11.
@@ -589,22 +594,23 @@ nog1:
 	SYSCALL
 
 	// In parent, return.
-	CMPQ	AX, $0
-	JEQ	3(PC)
-	MOVL	AX, ret+40(FP)
-	RET
+	CMPQ	AX, $0 // 判断clone系统调用的返回值
+	JEQ	3(PC) // 跳转到子线程部分
+	MOVL	AX, ret+40(FP) // 父线程需要执行的指令
+	RET // 父线程需要执行的指令
 
 	// In child, on new stack.
-	MOVQ	SI, SP
+	// 子线程需要继续执行的指令
+	MOVQ	SI, SP // 设置CPU栈顶寄存器指向子线程的栈顶，这条指令看起来是多余的？内核应该已经把SP设置好了
 
 	// If g or m are nil, skip Go-related setup.
-	CMPQ	R13, $0    // m
+	CMPQ	R13, $0    // m，新创建的m结构体对象的地址，由父线程保存在R8寄存器中的值被复制到了子线程
 	JEQ	nog2
-	CMPQ	R9, $0    // g
+	CMPQ	R9, $0    // g，m.g0的地址，由父线程保存在R9寄存器中的值被复制到了子线程
 	JEQ	nog2
 
 	// Initialize m->procid to Linux tid
-	MOVL	$SYS_gettid, AX
+	MOVL	$SYS_gettid, AX // 通过gettid系统调用获取线程ID（tid）
 	SYSCALL
 	MOVQ	AX, m_procid(R13)
 
@@ -617,7 +623,7 @@ nog1:
 
 nog2:
 	// Call fn. This is the PC of an ABI0 function.
-	CALL	R12
+	CALL	R12 // 这里调用mstart函数
 
 	// It shouldn't return. If it does, exit that thread.
 	MOVL	$111, DI
@@ -635,21 +641,29 @@ TEXT runtime·sigaltstack(SB),NOSPLIT,$-8
 	MOVL	$0xf1, 0xf1  // crash
 	RET
 
+// CPU中有个叫fs的段寄存器与之对应，而每个线程都有自己的一组CPU寄存器值，操作系统在把线程调离
+// CPU运行时会帮我们把所有寄存器中的值保存在内存中，调度线程起来运行时又会从内存中把这些寄存器的值
+// 恢复到CPU，这样，在此之后，工作线程代码就可以通过fs寄存器来找到m.tls，读者可以参考上面初始化
+// tls之后对tls功能验证的代码来理解这一过程。
+// **这里通过arch_prctl系统调用把m0.tls[1]的地址设置成了fs段的段基址。**
 // set tls base to DI
 TEXT runtime·settls(SB),NOSPLIT,$32
 #ifdef GOOS_android
 	// Android stores the TLS offset in runtime·tls_g.
 	SUBQ	runtime·tls_g(SB), DI
 #else
+    //下面这一句代码把DI寄存器中的地址加8，为什么要+8呢，主要跟ELF可执行文件格式中的TLS实现的机制有关
+    //执行下面这句指令之后DI寄存器中的存放的就是m.tls[1]的地址了
 	ADDQ	$8, DI	// ELF wants to use -8(FS)
 #endif
-	MOVQ	DI, SI
-	MOVQ	$0x1002, DI	// ARCH_SET_FS
-	MOVQ	$SYS_arch_prctl, AX
+    //下面通过arch_prctl系统调用设置FS段基址
+	MOVQ	DI, SI //SI存放arch_prctl系统调用的第二个参数
+	MOVQ	$0x1002, DI	// arch_prctl的第一个参数 ARCH_SET_FS
+	MOVQ	$SYS_arch_prctl, AX //系统调用编号
 	SYSCALL
 	CMPQ	AX, $0xfffffffffffff001
 	JLS	2(PC)
-	MOVL	$0xf1, 0xf1  // crash
+	MOVL	$0xf1, 0xf1  // 系统调用失败直接crash, crash
 	RET
 
 TEXT runtime·osyield(SB),NOSPLIT,$0

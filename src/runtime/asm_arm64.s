@@ -107,8 +107,18 @@ nocgo:
 DATA	runtime·mainPC+0(SB)/8,$runtime·main<ABIInternal>(SB)
 GLOBL	runtime·mainPC(SB),RODATA,$8
 
+// Windows ARM64 needs an immediate 0xf000 argument.
+// See go.dev/issues/53837.
+#define BREAK	\
+#ifdef GOOS_windows	\
+	BRK	$0xf000 	\
+#else 				\
+	BRK 			\
+#endif 				\
+
+
 TEXT runtime·breakpoint(SB),NOSPLIT|NOFRAME,$0-0
-	BRK
+	BREAK
 	RET
 
 TEXT runtime·asminit(SB),NOSPLIT|NOFRAME,$0-0
@@ -265,15 +275,15 @@ noswitch:
 // calling the scheduler calling newm calling gc), so we must
 // record an argument size. For that purpose, it has no arguments.
 TEXT runtime·morestack(SB),NOSPLIT|NOFRAME,$0-0
-	// Cannot grow scheduler stack (m->g0).
-	MOVD	g_m(g), R8
-	MOVD	m_g0(R8), R4
-	CMP	g, R4
+	// 不能增长 g0 的栈空间。Cannot grow scheduler stack (m->g0).
+	MOVD	g_m(g), R8 // 获取当前 g  的 m
+	MOVD	m_g0(R8), R4 // 获取当前 m->g0
+	CMP	g, R4 // 比较当前 g 和 g0
 	BNE	3(PC)
 	BL	runtime·badmorestackg0(SB)
 	B	runtime·abort(SB)
 
-	// Cannot grow signal stack (m->gsignal).
+	// 不能增长 signal 栈。Cannot grow signal stack (m->gsignal).
 	MOVD	m_gsignal(R8), R4
 	CMP	g, R4
 	BNE	3(PC)
@@ -303,6 +313,7 @@ TEXT runtime·morestack(SB),NOSPLIT|NOFRAME,$0-0
 	MOVD	R0, RSP
 	MOVD	(g_sched+gobuf_bp)(g), R29
 	MOVD.W	$0, -16(RSP)	// create a call frame on g0 (saved LR; keep 16-aligned)
+	// 调用runtime.newstack完成栈扩容
 	BL	runtime·newstack(SB)
 
 	// Not reached, but make sure the return PC from the call to newstack
@@ -1325,7 +1336,7 @@ TEXT runtime·debugCallV2<ABIInternal>(SB),NOSPLIT|NOFRAME,$0-0
 	// Set R20 to 8 and invoke BRK. The debugger should get the
 	// reason a call can't be injected from SP+8 and resume execution.
 	MOVD	$8, R20
-	BRK
+	BREAK
 	JMP	restore
 
 good:
@@ -1374,7 +1385,7 @@ good:
 	MOVD	$20, R0
 	MOVD	R0, 16(RSP) // length of debugCallFrameTooLarge string
 	MOVD	$8, R20
-	BRK
+	BREAK
 	JMP	restore
 
 restore:
@@ -1383,7 +1394,7 @@ restore:
 	// Set R20 to 16 and invoke BRK. The debugger should restore
 	// all registers except for PC and RSP and resume execution.
 	MOVD	$16, R20
-	BRK
+	BREAK
 	// We must not modify flags after this point.
 
 	// Restore pointer-containing registers, which may have been
@@ -1414,9 +1425,9 @@ restore:
 TEXT NAME(SB),WRAPPER,$MAXSIZE-0;		\
 	NO_LOCAL_POINTERS;		\
 	MOVD	$0, R20;		\
-	BRK;		\
+	BREAK;		\
 	MOVD	$1, R20;		\
-	BRK;		\
+	BREAK;		\
 	RET
 DEBUG_CALL_FN(debugCall32<>, 32)
 DEBUG_CALL_FN(debugCall64<>, 64)
@@ -1439,7 +1450,7 @@ TEXT runtime·debugCallPanicked(SB),NOSPLIT,$16-16
 	MOVD	val_data+8(FP), R0
 	MOVD	R0, 16(RSP)
 	MOVD	$2, R20
-	BRK
+	BREAK
 	RET
 
 // Note: these functions use a special calling convention to save generated code space.

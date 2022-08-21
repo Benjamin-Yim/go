@@ -10,6 +10,7 @@ import (
 	"internal/abi"
 	"internal/goarch"
 	"runtime/internal/atomic"
+	"runtime/internal/sys"
 	"unsafe"
 )
 
@@ -19,9 +20,8 @@ import (
 // finblock is allocated from non-GC'd memory, so any heap pointers
 // must be specially handled. GC currently assumes that the finalizer
 // queue does not grow during marking (but it can shrink).
-//
-//go:notinheap
 type finblock struct {
+	_       sys.NotInHeap
 	alllink *finblock
 	next    *finblock
 	cnt     uint32
@@ -34,8 +34,8 @@ var fing *g        // goroutine that runs finalizers
 var finq *finblock // list of finalizers that are to be executed
 var finc *finblock // cache of free blocks
 var finptrmask [_FinBlockSize / goarch.PtrSize / 8]byte
-var fingwait bool
-var fingwake bool
+var fingwait bool    // 析构函数是否在等待执行
+var fingwake bool    // 析构函数是否在等待唤醒
 var allfin *finblock // list of all blocks
 
 // NOTE: Layout known to queuefinalizer.
@@ -73,6 +73,12 @@ var finalizer1 = [...]byte{
 	1<<0 | 0<<1 | 1<<2 | 1<<3 | 1<<4 | 1<<5 | 0<<6 | 1<<7,
 	1<<0 | 1<<1 | 1<<2 | 0<<3 | 1<<4 | 1<<5 | 1<<6 | 1<<7,
 	0<<0 | 1<<1 | 1<<2 | 1<<3 | 1<<4 | 0<<5 | 1<<6 | 1<<7,
+}
+
+// lockRankMayQueueFinalizer records the lock ranking effects of a
+// function that may call queuefinalizer.
+func lockRankMayQueueFinalizer() {
+	lockWithRankMayAcquire(&finlock, getLockRank(&finlock))
 }
 
 func queuefinalizer(p unsafe.Pointer, fn *funcval, nret uintptr, fint *_type, ot *ptrtype) {
