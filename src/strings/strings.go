@@ -568,14 +568,24 @@ func ToUpper(s string) string {
 		if !hasLower {
 			return s
 		}
-		var b Builder
+		var (
+			b   Builder
+			pos int
+		)
 		b.Grow(len(s))
 		for i := 0; i < len(s); i++ {
 			c := s[i]
 			if 'a' <= c && c <= 'z' {
 				c -= 'a' - 'A'
+				if pos < i {
+					b.WriteString(s[pos:i])
+				}
+				b.WriteByte(c)
+				pos = i + 1
 			}
-			b.WriteByte(c)
+		}
+		if pos < len(s) {
+			b.WriteString(s[pos:])
 		}
 		return b.String()
 	}
@@ -598,14 +608,24 @@ func ToLower(s string) string {
 		if !hasUpper {
 			return s
 		}
-		var b Builder
+		var (
+			b   Builder
+			pos int
+		)
 		b.Grow(len(s))
 		for i := 0; i < len(s); i++ {
 			c := s[i]
 			if 'A' <= c && c <= 'Z' {
 				c += 'a' - 'A'
+				if pos < i {
+					b.WriteString(s[pos:i])
+				}
+				b.WriteByte(c)
+				pos = i + 1
 			}
-			b.WriteByte(c)
+		}
+		if pos < len(s) {
+			b.WriteString(s[pos:])
 		}
 		return b.String()
 	}
@@ -1203,7 +1223,7 @@ func CutPrefix(s, prefix string) (after string, found bool) {
 // and reports whether it found the suffix.
 // If s doesn't end with suffix, CutSuffix returns s, false.
 // If suffix is the empty string, CutSuffix returns s, true.
-func CutSuffix(s, suffix string) (after string, found bool) {
+func CutSuffix(s, suffix string) (before string, found bool) {
 	if !HasSuffix(s, suffix) {
 		return s, false
 	}

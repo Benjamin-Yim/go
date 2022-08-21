@@ -597,6 +597,13 @@ func TestSignalForwardingExternal(t *testing.T) {
 }
 
 func TestSignalForwardingGo(t *testing.T) {
+	// This test fails on darwin-amd64 because of the special
+	// handling of user-generated SIGSEGV signals in fixsigcode in
+	// runtime/signal_darwin_amd64.go.
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "amd64" {
+		t.Skip("not supported on darwin-amd64")
+	}
+
 	checkSignalForwardingTest(t)
 	buildSignalForwardingTest(t)
 	err := runSignalForwardingTest(t, "4")
