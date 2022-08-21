@@ -334,10 +334,6 @@ func (g *genInst) buildClosure(outer *ir.Func, x ir.Node) ir.Node {
 	} else { // ir.OMETHEXPR or ir.METHVALUE
 		// Method expression T.M where T is a generic type.
 		se := x.(*ir.SelectorExpr)
-		targs := deref(se.X.Type()).RParams()
-		if len(targs) == 0 {
-			panic("bad")
-		}
 		if x.Op() == ir.OMETHVALUE {
 			rcvrValue = se.X
 		}
@@ -348,7 +344,8 @@ func (g *genInst) buildClosure(outer *ir.Func, x ir.Node) ir.Node {
 		// of se.Selection, since that will be the type that actually has
 		// the method.
 		recv := deref(se.Selection.Type.Recv().Type)
-		if len(recv.RParams()) == 0 {
+		targs := recv.RParams()
+		if len(targs) == 0 {
 			// The embedded type that actually has the method is not
 			// actually generic, so no need to build a closure.
 			return x
@@ -623,7 +620,7 @@ func checkFetchBody(nameNode *ir.Name) {
 	}
 }
 
-// getInstantiation gets the instantiantion and dictionary of the function or method nameNode
+// getInstantiation gets the instantiation and dictionary of the function or method nameNode
 // with the type arguments shapes. If the instantiated function is not already
 // cached, then it calls genericSubst to create the new instantiation.
 func (g *genInst) getInstantiation(nameNode *ir.Name, shapes []*types.Type, isMeth bool) *instInfo {
@@ -1357,6 +1354,9 @@ func (g *genInst) dictPass(info *instInfo) {
 			}
 		case ir.ODOTTYPE, ir.ODOTTYPE2:
 			dt := m.(*ir.TypeAssertExpr)
+			if dt.Type().IsEmptyInterface() || (dt.Type().IsInterface() && !dt.Type().HasShape()) {
+				break
+			}
 			if !dt.Type().HasShape() && !(dt.X.Type().HasShape() && !dt.X.Type().IsEmptyInterface()) {
 				break
 			}
@@ -1656,9 +1656,11 @@ func (g *genInst) getDictionarySym(gf *ir.Name, targs []*types.Type, isMeth bool
 				var nameNode *ir.Name
 				se := call.X.(*ir.SelectorExpr)
 				if se.X.Type().IsShape() {
-					// This is a method call enabled by a type bound.
 					tparam := se.X.Type()
-					if call.X.Op() == ir.ODOTMETH {
+					// Ensure methods on all instantiating types are computed.
+					typecheck.CalcMethods(tparam)
+					if typecheck.Lookdot1(nil, se.Sel, tparam, tparam.AllMethods(), 0) != nil {
+						// This is a method call enabled by a type bound.
 						// We need this extra check for method expressions,
 						// which don't add in the implicit XDOTs.
 						tmpse := ir.NewSelectorExpr(src.NoXPos, ir.OXDOT, se.X, se.Sel)

@@ -77,6 +77,9 @@ func (c *sigctxt) preparePanic(sig uint32, gp *g) {
 	}
 }
 
+// ctxt.pushCall 之前， ctxt.rip() 和 ctxt.rep() 都保存了被中断的 Goroutine 所在
+// 的位置， 但是 pushCall 直接修改了这些寄存器，进而当从 sighandler 返回用户态 Goroutine
+// 时， 能够从注入的 asyncPreempt 开始执行
 func (c *sigctxt) pushCall(targetPC, resumePC uintptr) {
 	// Make it look like we called target at resumePC.
 	sp := uintptr(c.rsp())

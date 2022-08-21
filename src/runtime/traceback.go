@@ -7,7 +7,6 @@ package runtime
 import (
 	"internal/bytealg"
 	"internal/goarch"
-	"runtime/internal/atomic"
 	"runtime/internal/sys"
 	"unsafe"
 )
@@ -30,12 +29,17 @@ const usesLR = sys.MinFrameSize > 0
 // The skip argument is only valid with pcbuf != nil and counts the number
 // of logical frames to skip rather than physical frames (with inlining, a
 // PC in pcbuf can represent multiple calls).
+// pcbuf 当前执行的上下文
+// max ??
+// callback 调整指针将要回调的方法
+// v 调整幅度
 func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max int, callback func(*stkframe, unsafe.Pointer) bool, v unsafe.Pointer, flags uint) int {
 	if skip > 0 && callback != nil {
 		throw("gentraceback callback cannot be used with non-zero skip")
 	}
 
 	// Don't call this "g"; it's too easy get "g" and "gp" confused.
+	// 当前要调整的 g 就是当前正在运行的 g ，就抛出异常，不允许调整。
 	if ourg := getg(); ourg == gp && ourg == ourg.m.curg {
 		// The starting sp has been passed in as a uintptr, and the caller may
 		// have other uintptr-typed stack references as well.
@@ -110,7 +114,8 @@ func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max in
 		frame.pc = frame.lr
 		frame.lr = 0
 	}
-
+	// 当前执行点因为调用了其他方法所以需要栈检测
+	// 所以需要获取栈方法地址
 	f := findfunc(frame.pc)
 	if !f.valid() {
 		if callback != nil || printing {
@@ -819,10 +824,10 @@ func traceback1(pc, sp, lr uintptr, gp *g, flags uint) {
 		// concurrently with a signal handler.
 		// We just have to stop a signal handler from interrupting
 		// in the middle of our copy.
-		atomic.Store(&gp.m.cgoCallersUse, 1)
+		gp.m.cgoCallersUse.Store(1)
 		cgoCallers := *gp.m.cgoCallers
 		gp.m.cgoCallers[0] = 0
-		atomic.Store(&gp.m.cgoCallersUse, 0)
+		gp.m.cgoCallersUse.Store(0)
 
 		printCgoTraceback(&cgoCallers)
 	}
@@ -923,8 +928,8 @@ func gcallers(gp *g, skip int, pcbuf []uintptr) int {
 // showframe reports whether the frame with the given characteristics should
 // be printed during a traceback.
 func showframe(f funcInfo, gp *g, firstFrame bool, funcID, childID funcID) bool {
-	g := getg()
-	if g.m.throwing >= throwTypeRuntime && gp != nil && (gp == g.m.curg || gp == g.m.caughtsig.ptr()) {
+	mp := getg().m
+	if mp.throwing >= throwTypeRuntime && gp != nil && (gp == mp.curg || gp == mp.caughtsig.ptr()) {
 		return true
 	}
 	return showfuncinfo(f, firstFrame, funcID, childID)
@@ -1051,10 +1056,10 @@ func tracebackothers(me *g) {
 		}
 		print("\n")
 		goroutineheader(gp)
-		// Note: gp.m == g.m occurs when tracebackothers is
-		// called from a signal handler initiated during a
-		// systemstack call. The original G is still in the
-		// running state, and we want to print its stack.
+		// Note: gp.m == getg().m occurs when tracebackothers is called
+		// from a signal handler initiated during a systemstack call.
+		// The original G is still in the running state, and we want to
+		// print its stack.
 		if gp.m != getg().m && readgstatus(gp)&^_Gscan == _Grunning {
 			print("\tgoroutine running on other thread; stack unavailable\n")
 			printcreatedby(gp)
@@ -1407,7 +1412,7 @@ func printOneCgoTraceback(pc uintptr, max int, arg *cgoSymbolizerArg) int {
 // callCgoSymbolizer calls the cgoSymbolizer function.
 func callCgoSymbolizer(arg *cgoSymbolizerArg) {
 	call := cgocall
-	if panicking > 0 || getg().m.curg != getg() {
+	if panicking.Load() > 0 || getg().m.curg != getg() {
 		// We do not want to call into the scheduler when panicking
 		// or when on the system stack.
 		call = asmcgocall
@@ -1427,7 +1432,7 @@ func cgoContextPCs(ctxt uintptr, buf []uintptr) {
 		return
 	}
 	call := cgocall
-	if panicking > 0 || getg().m.curg != getg() {
+	if panicking.Load() > 0 || getg().m.curg != getg() {
 		// We do not want to call into the scheduler when panicking
 		// or when on the system stack.
 		call = asmcgocall

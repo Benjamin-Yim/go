@@ -136,13 +136,16 @@ func noteclear(n *note) {
 	n.key = 0
 }
 
+// notewakeup 唤醒 m, 自旋到非自旋
 func notewakeup(n *note) {
-	// 首先交换nmspinning到1, 成功再继续, 多个线程同时执行wakep函数只有一个会继续
+	// 首先交换nmspinning到1, 成功再继续
+	//设置 n.key = 1, 被唤醒的线程通过查看该值是否等于1来确定是被其它线程唤醒还是意外从睡眠中苏醒
 	old := atomic.Xchg(key32(&n.key), 1)
 	if old != 0 {
 		print("notewakeup - double wakeup (", old, ")\n")
 		throw("notewakeup - double wakeup")
 	}
+	//调用futexwakeup唤醒
 	futexwakeup(key32(&n.key), 1)
 }
 
@@ -151,11 +154,12 @@ func notesleep(n *note) {
 	if gp != gp.m.g0 {
 		throw("notesleep not on g0")
 	}
-	ns := int64(-1)
+	ns := int64(-1) //超时时间设置为-1，表示无限期等待
 	if *cgo_yield != nil {
 		// Sleep for an arbitrary-but-moderate interval to poll libc interceptors.
-		ns = 10e6
+		ns = 10e6 // cgo 特殊处理
 	}
+	//使用循环，保证不是意外被唤醒
 	for atomic.Load(key32(&n.key)) == 0 {
 		gp.m.blocked = true
 		futexsleep(key32(&n.key), 0, ns)
@@ -244,4 +248,5 @@ func beforeIdle(int64, int64) (*g, bool) {
 	return nil, false
 }
 
+// checkTimeouts 恢复那些在等待一个 note 且已经触发其 deadline 时的 Goroutine。
 func checkTimeouts() {}

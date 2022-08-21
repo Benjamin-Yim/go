@@ -55,7 +55,6 @@ package runtime
 import (
 	"internal/abi"
 	"internal/goarch"
-	"runtime/internal/atomic"
 )
 
 type suspendGState struct {
@@ -192,7 +191,7 @@ func suspendG(gp *g) suspendGState {
 		case _Grunning:
 			// Optimization: if there is already a pending preemption request
 			// (from the previous loop iteration), don't bother with the atomics.
-			if gp.preemptStop && gp.preempt && gp.stackguard0 == stackPreempt && asyncM == gp.m && atomic.Load(&asyncM.preemptGen) == asyncGen {
+			if gp.preemptStop && gp.preempt && gp.stackguard0 == stackPreempt && asyncM == gp.m && asyncM.preemptGen.Load() == asyncGen {
 				break
 			}
 
@@ -208,7 +207,7 @@ func suspendG(gp *g) suspendGState {
 
 			// Prepare for asynchronous preemption.
 			asyncM2 := gp.m
-			asyncGen2 := atomic.Load(&asyncM2.preemptGen)
+			asyncGen2 := asyncM2.preemptGen.Load()
 			needAsync := asyncM != asyncM2 || asyncGen != asyncGen2
 			asyncM = asyncM2
 			asyncGen = asyncGen2
@@ -301,17 +300,26 @@ func canPreemptM(mp *m) bool {
 // frame and its parent frame conservatively.
 //
 // asyncPreempt is implemented in assembly.
+//
+// asyncPreempt 保存了所有用户寄存器，并调用 asyncPreempt2
+//
+// 当栈扫描遭遇 asyncPreempt 栈帧时，将会保守的扫描调用方栈帧
 func asyncPreempt()
 
 //go:nosplit
 func asyncPreempt2() {
+	if debugSource {
+		println("强制抢占")
+	}
 	gp := getg()
 	gp.asyncSafePoint = true
+	// 重新进入调度循环进而调度其他 Goroutine（preemptPark 和 gopreempt_m）
 	if gp.preemptStop {
 		mcall(preemptPark)
 	} else {
 		mcall(gopreempt_m)
 	}
+	// 异步抢占过程结束
 	gp.asyncSafePoint = false
 }
 

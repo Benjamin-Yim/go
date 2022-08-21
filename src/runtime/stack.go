@@ -111,22 +111,6 @@ const (
 )
 
 const (
-	// stackDebug == 0: no logging
-	//            == 1: logging of per-stack operations
-	//            == 2: logging of per-frame operations
-	//            == 3: logging of per-word updates
-	//            == 4: logging of per-word reads
-	stackDebug       = 0
-	stackFromSystem  = 0 // allocate stacks from system memory instead of the heap
-	stackFaultOnFree = 0 // old stacks are mapped noaccess to detect use after free
-	stackPoisonCopy  = 0 // fill stack that should not be accessed with garbage, to detect bad dereferences during copy
-	stackNoCache     = 0 // disable per-P small stack caches
-
-	// check the BP links during traceback.
-	debugCheckBP = false
-)
-
-const (
 	uintptrMask = 1<<(8*goarch.PtrSize) - 1
 
 	// The values below can be stored to g.stackguard0 to force
@@ -155,18 +139,20 @@ const (
 //	order = log_2(size/FixedStack)
 //
 // There is a free list for each order.
+// 正常小栈栈池
 var stackpool [_NumStackOrders]struct {
 	item stackpoolItem
-	_    [cpu.CacheLinePadSize - unsafe.Sizeof(stackpoolItem{})%cpu.CacheLinePadSize]byte
+	_    [(cpu.CacheLinePadSize - unsafe.Sizeof(stackpoolItem{})%cpu.CacheLinePadSize) % cpu.CacheLinePadSize]byte
 }
 
-//go:notinheap
 type stackpoolItem struct {
+	_    sys.NotInHeap
 	mu   mutex
 	span mSpanList
 }
 
 // Global pool of large stack spans.
+// 全局 span 大栈的栈池
 var stackLarge struct {
 	lock mutex
 	free [heapAddrBits - pageShift]mSpanList // free lists by log_2(s.npages)
@@ -198,12 +184,17 @@ func stacklog2(n uintptr) int {
 
 // Allocates a stack from the free pool. Must be called with
 // stackpool[order].item.mu held.
+// 从空闲池中分配一个栈，必须在持有 stackpool[order].item.mu 下调用
 func stackpoolalloc(order uint8) gclinkptr {
+	if debugSource {
+		println("执行栈分配：", order)
+	}
 	list := &stackpool[order].item.span
-	s := list.first
+	s := list.first // 链表头
 	lockWithRankMayAcquire(&mheap_.lock, lockRankMheap)
 	if s == nil {
 		// no free stacks. Allocate another span worth.
+		// 缓存已空，从 mheap 上进行分配
 		s = mheap_.allocManual(_StackCacheSize>>_PageShift, spanAllocStack) // 栈池空就从 span 下增长
 		if s == nil {
 			throw("out of memory")
@@ -214,6 +205,7 @@ func stackpoolalloc(order uint8) gclinkptr {
 		if s.manualFreeList.ptr() != nil {
 			throw("bad manualFreeList")
 		}
+		// 成功分配到栈
 		osStackAlloc(s)
 		s.elemsize = _FixedStack << order
 		for i := uintptr(0); i < _StackCacheSize; i += s.elemsize {
@@ -227,10 +219,13 @@ func stackpoolalloc(order uint8) gclinkptr {
 	if x.ptr() == nil {
 		throw("span has no free stacks")
 	}
+	// 栈指针指向下一个
 	s.manualFreeList = x.ptr().next
 	s.allocCount++
 	if s.manualFreeList.ptr() == nil {
 		// all stacks in s are allocated.
+		// 当前 span 空间使用没了
+		// s 中所有的栈都被分配了
 		list.remove(s)
 	}
 	return x
@@ -275,6 +270,8 @@ func stackpoolfree(x gclinkptr, order uint8) {
 // stackcacherefill/stackcacherelease implement a global pool of stack segments.
 // The pool is required to prevent unlimited growth of per-thread caches.
 //
+// 如果没多的缓存，则向内部填充更多的缓存
+//
 //go:systemstack
 func stackcacherefill(c *mcache, order uint8) {
 	if stackDebug >= 1 {
@@ -283,10 +280,15 @@ func stackcacherefill(c *mcache, order uint8) {
 
 	// Grab some stacks from the global cache.
 	// Grab half of the allowed capacity (to prevent thrashing).
+	//
+	// 从全局缓存中获取一些 stack
+	// 获取所允许的容量的一半来防止 thrashing
 	var list gclinkptr
 	var size uintptr
 	lock(&stackpool[order].item.mu)
+	// 遍历填充栈缓存池
 	for size < _StackCacheSize/2 {
+		// 依旧从 span 中获取
 		x := stackpoolalloc(order)
 		x.ptr().next = list
 		list = x
@@ -340,6 +342,11 @@ func stackcache_clear(c *mcache) {
 // stackalloc must run on the system stack because it uses per-P
 // resources and must not split the stack.
 //
+// 栈可能从两个不同的位置被分配：小栈和大栈。小栈指大小为 2K/4K/8K/16K 的栈，
+// 大栈则是更大的栈。
+//
+// 因为我们已经知道了需要栈的大小，那么只需要知道分配好的栈的起始位置在哪儿就够了， 即指针 v
+//
 //go:systemstack
 func stackalloc(n uint32) stack {
 	// Stackalloc must be called on scheduler stack, so that we
@@ -368,8 +375,13 @@ func stackalloc(n uint32) stack {
 	// Small stacks are allocated with a fixed-size free-list allocator.
 	// If we need a stack of a bigger size, we fall back on allocating
 	// a dedicated span.
-	var v unsafe.Pointer // 小的栈空间，按照标准的空闲列表来分配，如果需要大的栈空间需要使用 span 来分配
+	//
+	// 小的栈空间，按照标准的空闲列表来分配，
+	// 如果需要大的栈空间需要使用 span 来分配
+	var v unsafe.Pointer
+	// 检查是否从缓存分配
 	if n < _FixedStack<<_NumStackOrders && n < _StackCacheSize {
+		// 小栈分配
 		order := uint8(0)
 		n2 := n
 		for n2 > _FixedStack {
@@ -377,16 +389,19 @@ func stackalloc(n uint32) stack {
 			n2 >>= 1
 		}
 		var x gclinkptr // 两者有什么区别？？？？
+		// 决定是否从全局 stackpool 中分配
 		if stackNoCache != 0 || thisg.m.p == 0 || thisg.m.preemptoff != "" {
 			// thisg.m.p == 0 can happen in the guts of exitsyscall
 			// or procresize. Just get a stack from the global pool.
 			// Also don't touch stackcache during gc
 			// as it's flushed concurrently.
-			// 可能发生在系统调用退出的情况下需要栈空间，那么只需要从全局栈池获取就可以了
+			//
+			// thisg.m.p == 0 可能发生在系统调用退出的情况下需要栈空间，那么只需要从全局栈池获取就可以了
 			lock(&stackpool[order].item.mu)
 			x = stackpoolalloc(order) // 从栈池中分配一个栈
 			unlock(&stackpool[order].item.mu)
 		} else {
+			// 从对应 p 缓存池中提取可复用的空间
 			c := thisg.m.p.ptr().mcache
 			x = c.stackcache[order].list // 从栈空闲列表中分配栈空间
 			if x.ptr() == nil {          // 没有就从缓存池中，填充一个
@@ -396,13 +411,15 @@ func stackalloc(n uint32) stack {
 			c.stackcache[order].list = x.ptr().next
 			c.stackcache[order].size -= uintptr(n)
 		}
-		v = unsafe.Pointer(x)
+		v = unsafe.Pointer(x) // 最终取得 stack
 	} else {
-		var s *mspan // 需要更大的栈空间，在span 上分配
+		// 需要更大的栈空间，在span 上分配
+		var s *mspan
 		npage := uintptr(n) >> _PageShift
 		log2npage := stacklog2(npage)
 
 		// Try to get a stack from the large stack cache.
+		// 尝试从 stackLarge 缓存中获取堆栈。
 		lock(&stackLarge.lock)
 		if !stackLarge.free[log2npage].isEmpty() {
 			s = stackLarge.free[log2npage].first
@@ -414,6 +431,7 @@ func stackalloc(n uint32) stack {
 
 		if s == nil {
 			// Allocate a new stack from the heap.
+			// 如果无法从缓存中获取，则从堆中分配一个新的栈
 			s = mheap_.allocManual(npage, spanAllocStack)
 			if s == nil {
 				throw("out of memory")
@@ -446,6 +464,7 @@ func stackalloc(n uint32) stack {
 //
 //go:systemstack
 func stackfree(stk stack) {
+
 	gp := getg()
 	v := unsafe.Pointer(stk.lo)
 	n := stk.hi - stk.lo
@@ -454,6 +473,9 @@ func stackfree(stk stack) {
 	}
 	if stk.lo+n < stk.hi {
 		throw("bad stack size")
+	}
+	if debugSource {
+		println("释放栈空间:", n, ",hi:", unsafe.Pointer(stk.hi), ",lo:", unsafe.Pointer(stk.lo))
 	}
 	if stackDebug >= 1 {
 		println("stackfree", v, n)
@@ -556,15 +578,51 @@ var ptrnames = []string{
 // |  return address  |
 // +------------------+ <- frame->sp
 
+// 栈帧布局
+// bp：栈基，也就是栈底。rbp为存储栈基的寄存器
+// sp：栈顶。rsp为存储栈顶的寄存器
+// caller 调用者
+// callee 被调用者
+// (x86)
+// +------------------+
+// | args from caller |
+// +------------------+ <- frame->argp
+// |  return address  |
+// +------------------+
+// |  caller's BP (*) | (*) if framepointer_enabled && varp < sp
+// +------------------+ <- frame->varp
+// |     locals       |
+// +------------------+
+// |  args to callee  |
+// +------------------+ <- frame->sp
+//
+// (arm)
+// +------------------+
+// | args from caller |
+// +------------------+ <- frame->argp
+// | caller's retaddr |
+// +------------------+ <- frame->varp
+// |     locals       |
+// +------------------+
+// |  args to callee  |
+// +------------------+
+// |  return address  |
+// +------------------+ <- frame->sp
+
 type adjustinfo struct {
-	old   stack
-	delta uintptr // ptr distance from old to new stack (newbase - oldbase)
+	old   stack   // 旧栈的地址
+	delta uintptr // 新栈相对于旧栈的相对偏移增量。ptr distance from old to new stack (newbase - oldbase)
 	cache pcvalueCache
 
+	// sghi 是堆栈中最高的 "sudog.elem"。
 	// sghi is the highest sudog.elem on the stack.
 	sghi uintptr
 }
 
+// adjustpointer 检查*vpp是否在adjinfo所描述的旧栈中。
+//
+//	如果是，它就重写*vpp以指向新的堆栈。 也就是调整指针指向的位置
+//
 // Adjustpointer checks whether *vpp is in the old stack described by adjinfo.
 // If so, it rewrites *vpp to point into the new stack.
 func adjustpointer(adjinfo *adjustinfo, vpp unsafe.Pointer) {
@@ -648,8 +706,11 @@ func adjustpointers(scanp unsafe.Pointer, bv *bitvector, adjinfo *adjustinfo, f 
 }
 
 // Note: the argument/return area is adjusted by the callee.
+// frame 栈上下文位置
+// arg 调整幅度
 func adjustframe(frame *stkframe, arg unsafe.Pointer) bool {
 	adjinfo := (*adjustinfo)(arg)
+	// 不需要调整
 	if frame.continpc == 0 {
 		// Frame is dead.
 		return true
@@ -658,13 +719,14 @@ func adjustframe(frame *stkframe, arg unsafe.Pointer) bool {
 	if stackDebug >= 2 {
 		print("    adjusting ", funcname(f), " frame=[", hex(frame.sp), ",", hex(frame.fp), "] pc=", hex(frame.pc), " continpc=", hex(frame.continpc), "\n")
 	}
+	// 方法是系统栈切换
 	if f.funcID == funcID_systemstack_switch {
 		// A special routine at the bottom of stack of a goroutine that does a systemstack call.
 		// We will allow it to be copied even though we don't
 		// have full GC info for it (because it is written in asm).
 		return true
 	}
-
+	// 获取栈帧中的信息：本地变量、参数、对象
 	locals, args, objs := getStackMap(frame, &adjinfo.cache, true)
 
 	// Adjust local variables if stack frame has been allocated.
@@ -727,6 +789,7 @@ func adjustframe(frame *stkframe, arg unsafe.Pointer) bool {
 			}
 			for i := uintptr(0); i < ptrdata; i += goarch.PtrSize {
 				if *addb(gcdata, i/(8*goarch.PtrSize))>>(i/goarch.PtrSize&7)&1 != 0 {
+					// 调整指针，根据调整幅度加减指针的位置
 					adjustpointer(adjinfo, unsafe.Pointer(p+i))
 				}
 			}
@@ -853,16 +916,24 @@ func syncadjustsudogs(gp *g, used uintptr, adjinfo *adjustinfo) uintptr {
 	return sgsize
 }
 
+// 栈拷贝的其中一个难点就是 Go 中栈上的变量会包含自己的地址， 当我们拷贝了一
+// 个指向原栈的指针时，拷贝后的指针会变为无效指针。 不难发现，只有栈上分配的指
+// 针才能指向栈上的地址，否则这个指针指向的对象会重新在堆中进行分配（逃逸）。
 // Copies gp's stack to a new stack of a different size.
 // Caller must have changed gp status to Gcopystack.
 func copystack(gp *g, newsize uintptr) {
+	if debugSource {
+		print("执行栈 copy g:", gp.goid, "\n")
+	}
 	if gp.syscallsp != 0 {
 		throw("stack growth not allowed in system call")
 	}
+	// 原有的栈
 	old := gp.stack
 	if old.lo == 0 {
 		throw("nil stackbase")
 	}
+	// 栈大小
 	used := old.hi - gp.sched.sp
 	// Add just the difference to gcController.addScannableStack.
 	// g0 stacks never move, so this will never account for them.
@@ -871,6 +942,7 @@ func copystack(gp *g, newsize uintptr) {
 	gcController.addScannableStack(getg().m.p.ptr(), int64(newsize)-int64(old.hi-old.lo))
 
 	// allocate new stack
+	// 分配新的栈
 	new := stackalloc(uint32(newsize))
 	if stackPoisonCopy != 0 {
 		fillstack(new, 0xfd)
@@ -880,14 +952,16 @@ func copystack(gp *g, newsize uintptr) {
 	}
 
 	// Compute adjustment.
+	// 计算调整的幅度
 	var adjinfo adjustinfo
 	adjinfo.old = old
 	adjinfo.delta = new.hi - old.hi
 
 	// Adjust sudogs, synchronizing with channel ops if necessary.
+	// 调整 sudogs, 必要时与 channel 操作同步
 	ncopy := used
 	if !gp.activeStackChans {
-		if newsize < old.hi-old.lo && atomic.Load8(&gp.parkingOnChan) != 0 {
+		if newsize < old.hi-old.lo && gp.parkingOnChan.Load() {
 			// It's not safe for someone to shrink this stack while we're actively
 			// parking on a channel, but it is safe to grow since we do that
 			// ourselves and explicitly don't want to synchronize with channels
@@ -911,11 +985,13 @@ func copystack(gp *g, newsize uintptr) {
 	}
 
 	// Copy the stack (or the rest of it) to the new location
+	// 将原来的栈的内容复制到新的位置
 	memmove(unsafe.Pointer(new.hi-ncopy), unsafe.Pointer(old.hi-ncopy), ncopy)
 
 	// Adjust remaining structures that have pointers into stacks.
 	// We have to do most of these before we traceback the new
 	// stack because gentraceback uses them.
+	// 将具有指针的其余结构调整到堆栈中。
 	adjustctxt(gp, &adjinfo)
 	adjustdefers(gp, &adjinfo)
 	adjustpanics(gp, &adjinfo)
@@ -924,15 +1000,18 @@ func copystack(gp *g, newsize uintptr) {
 	}
 
 	// Swap out old stack for new one
+	// 切换到新栈
 	gp.stack = new
 	gp.stackguard0 = new.lo + _StackGuard // NOTE: might clobber a preempt request
 	gp.sched.sp = new.hi - used
 	gp.stktopsp += adjinfo.delta
 
 	// Adjust pointers in the new stack.
+	// 调整指针在新的栈中
 	gentraceback(^uintptr(0), ^uintptr(0), 0, gp, 0, nil, 0x7fffffff, adjustframe, noescape(unsafe.Pointer(&adjinfo)), 0)
 
 	// free old stack
+	// 释放旧栈
 	if stackPoisonCopy != 0 {
 		fillstack(old, 0xfc)
 	}
@@ -968,10 +1047,14 @@ func round2(x int32) int32 {
 //
 // 这必须是nowritebarrierrec，因为它可以作为堆栈增长的一部分从
 // 其他nowritebarrierrec函数中调用，但编译器并没有检查这一点。
+// newstack 在前半部分承担了对 Goroutine 进行抢占的任务， 而在后半部分则是真正的栈扩张。
 //
 //go:nowritebarrierrec
 func newstack() {
 	thisg := getg()
+	if debugSource {
+		print("thisg is g", thisg.goid, "\n")
+	}
 	// TODO: double check all gp. shouldn't be getg().
 	if thisg.m.morebuf.g.ptr().stackguard0 == stackFork {
 		throw("stack growth after fork")
@@ -984,7 +1067,9 @@ func newstack() {
 	}
 
 	gp := thisg.m.curg
-
+	if debugSource {
+		print("thisg.m.curg is g", gp.goid, "\n")
+	}
 	if thisg.m.curg.throwsplit {
 		// Update syscallsp, syscallpc in case traceback uses them.
 		morebuf := thisg.m.morebuf
@@ -1015,6 +1100,7 @@ func newstack() {
 	// NOTE: stackguard0 may change underfoot, if another thread
 	// is about to try to preempt gp. Read it just once and use that same
 	// value now and below.
+	// 如果是发起的抢占请求而非真正的栈分段
 	stackguard0 := atomic.Loaduintptr(&gp.stackguard0)
 
 	// Be conservative about where we preempt.
@@ -1030,6 +1116,8 @@ func newstack() {
 	// it needs a lock held by the goroutine), that small preemption turns
 	// into a real deadlock.
 	preempt := stackguard0 == stackPreempt
+	// 保守的对用户态代码进行抢占，而非抢占运行时代码
+	// 如果正持有锁、分配内存或抢占被禁用，则不发生抢占
 	if preempt {
 		// 判断是否可以抢占
 		if !canPreemptM(thisg.m) {
@@ -1038,6 +1126,7 @@ func newstack() {
 			// 抢占失败, 因为g.preempt等于true, runtime中的一些代码会重
 			// 新设置stackPreempt以重试下一次的抢占
 			gp.stackguard0 = gp.stack.lo + _StackGuard
+			// 重新进入调度循环
 			gogo(&gp.sched) // never return
 		}
 	}
@@ -1048,6 +1137,7 @@ func newstack() {
 	sp := gp.sched.sp
 	if goarch.ArchFamily == goarch.AMD64 || goarch.ArchFamily == goarch.I386 || goarch.ArchFamily == goarch.WASM {
 		// The call to morestack cost a word.
+		// 到 morestack 的调用会消耗一个字
 		sp -= goarch.PtrSize
 	}
 	if stackDebug >= 1 || sp < gp.stack.lo {
@@ -1060,7 +1150,7 @@ func newstack() {
 		print("runtime: split stack overflow: ", hex(sp), " < ", hex(gp.stack.lo), "\n")
 		throw("runtime: split stack overflow")
 	}
-
+	// 如果需要对栈进行调整
 	if preempt {
 		// g0 不参与抢占
 		if gp == thisg.m.g0 {
@@ -1079,20 +1169,24 @@ func newstack() {
 		}
 
 		if gp.preemptStop {
+			// 永不返回
 			preemptPark(gp) // never returns
 		}
 		// 如果不是GC引起的则调用gopreempt_m函数完成抢占.
 		// Act like goroutine called runtime.Gosched.
+		// 重新进入调度循环
 		gopreempt_m(gp) // never return
 	}
 
 	// Allocate a bigger segment and move the stack.
+	// 分配一个更大的段，并对栈进行移动
 	oldsize := gp.stack.hi - gp.stack.lo
-	newsize := oldsize * 2
+	newsize := oldsize * 2 // 两倍于原来的大小
 
 	// Make sure we grow at least as much as needed to fit the new frame.
 	// (This is just an optimization - the caller of morestack will
 	// recheck the bounds on return.)
+	// 需要的栈太大，直接溢出
 	if f := findfunc(gp.sched.pc); f.valid() {
 		max := uintptr(funcMaxSPDelta(f))
 		needed := max + _StackGuard
@@ -1121,10 +1215,13 @@ func newstack() {
 
 	// The goroutine must be executing in order to call newstack,
 	// so it must be Grunning (or Gscanrunning).
+	// goroutine 必须是正在执行过程中才来调用 newstack
+	// 所以这个状态一定是 Grunning 或 Gscanrunning
 	casgstatus(gp, _Grunning, _Gcopystack)
 
 	// The concurrent GC will not scan the stack while we are doing the copy since
 	// the gp is in a Gcopystack status.
+	// 因为 gp 处于 Gcopystack 状态，当我们对栈进行复制时并发 GC 不会扫描此栈
 	copystack(gp, newsize)
 	if stackDebug >= 1 {
 		print("stack grow done\n")
@@ -1139,12 +1236,15 @@ func nilfunc() {
 }
 
 // 设置sched.pc等于目标函数的地址
+// gostartcallfn首先从参数fv中提取出函数地址（初始化时是runtime.main），
+// 然后继续调用gostartcall函数
+//
 // adjust Gobuf as if it executed a call to fn
 // and then stopped before the first instruction in fn.
 func gostartcallfn(gobuf *gobuf, fv *funcval) {
 	var fn unsafe.Pointer
 	if fv != nil {
-		fn = unsafe.Pointer(fv.fn)
+		fn = unsafe.Pointer(fv.fn) //fn: gorotine的入口地址，初始化时对应的是runtime.main
 	} else {
 		fn = unsafe.Pointer(abi.FuncPCABIInternal(nilfunc))
 	}
@@ -1167,7 +1267,7 @@ func isShrinkStackSafe(gp *g) bool {
 	// We also can't *shrink* the stack in the window between the
 	// goroutine calling gopark to park on a channel and
 	// gp.activeStackChans being set.
-	return gp.syscallsp == 0 && !gp.asyncSafePoint && atomic.Load8(&gp.parkingOnChan) == 0
+	return gp.syscallsp == 0 && !gp.asyncSafePoint && !gp.parkingOnChan.Load()
 }
 
 // Maybe shrink the stack being used by gp.
@@ -1289,7 +1389,7 @@ func getStackMap(frame *stkframe, cache *pcvalueCache, debug bool) (locals, args
 		// at the function prologue, assume so and hope for the best.
 		pcdata = 0
 	}
-
+	// 局部变量
 	// Local variables.
 	size := frame.varp - frame.sp
 	var minsize uintptr
@@ -1300,6 +1400,7 @@ func getStackMap(frame *stkframe, cache *pcvalueCache, debug bool) (locals, args
 		minsize = sys.MinFrameSize
 	}
 	if size > minsize {
+		// 说明有参数
 		stackid := pcdata
 		stkmap := (*stackmap)(funcdata(f, _FUNCDATA_LocalsPointerMaps))
 		if stkmap == nil || stkmap.n <= 0 {
@@ -1321,7 +1422,7 @@ func getStackMap(frame *stkframe, cache *pcvalueCache, debug bool) (locals, args
 			print("      no locals to adjust\n")
 		}
 	}
-
+	// 参数指针处理
 	// Arguments.
 	if frame.arglen > 0 {
 		if frame.argmap != nil {
@@ -1349,7 +1450,7 @@ func getStackMap(frame *stkframe, cache *pcvalueCache, debug bool) (locals, args
 			}
 		}
 	}
-
+	// 栈对象处理
 	// stack objects.
 	if (GOARCH == "amd64" || GOARCH == "arm64" || GOARCH == "ppc64" || GOARCH == "ppc64le" || GOARCH == "riscv64") &&
 		unsafe.Sizeof(abi.RegArgs{}) > 0 && frame.argmap != nil {

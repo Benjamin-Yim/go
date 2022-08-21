@@ -711,6 +711,8 @@ func (c *ctxt5) stacksplit(p *obj.Prog, framesize int32) *obj.Prog {
 	if framesize <= objabi.StackSmall {
 		// small stack: SP < stackguard
 		//	CMP	stackguard, SP
+		// 小栈: SP <= stackguard，直接比较 SP 和 stackguard
+		//	CMPQ SP, stackguard
 		p = obj.Appendp(p, c.newprog)
 
 		p.As = ACMP
