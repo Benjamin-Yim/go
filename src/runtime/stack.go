@@ -580,15 +580,51 @@ var ptrnames = []string{
 // |  return address  |
 // +------------------+ <- frame->sp
 
+// 栈帧布局
+// bp：栈基，也就是栈底。rbp为存储栈基的寄存器
+// sp：栈顶。rsp为存储栈顶的寄存器
+// caller 调用者
+// callee 被调用者
+// (x86)
+// +------------------+
+// | args from caller |
+// +------------------+ <- frame->argp
+// |  return address  |
+// +------------------+
+// |  caller's BP (*) | (*) if framepointer_enabled && varp < sp
+// +------------------+ <- frame->varp
+// |     locals       |
+// +------------------+
+// |  args to callee  |
+// +------------------+ <- frame->sp
+//
+// (arm)
+// +------------------+
+// | args from caller |
+// +------------------+ <- frame->argp
+// | caller's retaddr |
+// +------------------+ <- frame->varp
+// |     locals       |
+// +------------------+
+// |  args to callee  |
+// +------------------+
+// |  return address  |
+// +------------------+ <- frame->sp
+
 type adjustinfo struct {
 	old   stack
-	delta uintptr // ptr distance from old to new stack (newbase - oldbase)
+	delta uintptr // 从旧栈到新栈的ptr距离（newbase - oldbase）。 ptr distance from old to new stack (newbase - oldbase)
 	cache pcvalueCache
 
+	// sghi 是堆栈中最高的 "sudog.elem"。
 	// sghi is the highest sudog.elem on the stack.
 	sghi uintptr
 }
 
+// adjustpointer 检查*vpp是否在adjinfo所描述的旧栈中。
+//
+//	如果是，它就重写*vpp以指向新的堆栈。 也就是调整指针指向的位置
+//
 // Adjustpointer checks whether *vpp is in the old stack described by adjinfo.
 // If so, it rewrites *vpp to point into the new stack.
 func adjustpointer(adjinfo *adjustinfo, vpp unsafe.Pointer) {
@@ -966,7 +1002,7 @@ func copystack(gp *g, newsize uintptr) {
 	gp.stktopsp += adjinfo.delta
 
 	// Adjust pointers in the new stack.
-	// 在新栈重调整指针
+	// 调整指针在新的栈中
 	gentraceback(^uintptr(0), ^uintptr(0), 0, gp, 0, nil, 0x7fffffff, adjustframe, noescape(unsafe.Pointer(&adjinfo)), 0)
 
 	// free old stack
