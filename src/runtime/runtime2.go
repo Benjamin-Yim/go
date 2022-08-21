@@ -447,7 +447,7 @@ type g struct {
 	sched     gobuf   //  g的调度数据, 当g中断时会保存当前的pc和rsp等值到这里, 恢复运行时会使用这里的值
 	syscallsp uintptr // 如果G 的状态为 Gsyscall ,那么值为 sched.sp 主要用于GC 期间. if status==Gsyscall, syscallsp = sched.sp to use during gc
 	syscallpc uintptr // 如果G的状态为 GSyscall ，那么值为 sched.pc 同上也是用于GC 期间，由此可见这两个字段是一起使用的.if status==Gsyscall, syscallpc = sched.pc to use during gc
-	stktopsp  uintptr // expected sp at top of stack, to check in traceback
+	stktopsp  uintptr // 在堆栈顶部的预期sp，在追踪中检查 .expected sp at top of stack, to check in traceback
 	// param is a generic pointer parameter field used to pass
 	// values in particular contexts where other storage for the
 	// parameter would be difficult to find. It is currently used
@@ -487,7 +487,7 @@ type g struct {
 	// parkingOnChan indicates that the goroutine is about to
 	// park on a chansend or chanrecv. Used to signal an unsafe point
 	// for stack shrinking.
-	parkingOnChan atomic.Bool  // 表示g 是放在chansend 还是 chanrecv。用于栈的收缩，是一个布尔值，但是原子性更新
+	parkingOnChan atomic.Bool // 表示g 是放在chansend 还是 chanrecv。用于栈的收缩，是一个布尔值，但是原子性更新
 
 	raceignore     int8     // ignore race detection events
 	sysblocktraced bool     // StartTrace has emitted EvGoInSyscall about this goroutine
@@ -550,7 +550,7 @@ type m struct {
 	// 系统管理的一个g，执行调度代码时使用的。比如执行用户的goroutine时，就需要把把用户
 	// 的栈信息换到内核线程的栈，以便能够执行用户goroutine
 	g0      *g     // goroutine with scheduling stack
-	morebuf gobuf  // goroutine 的堆栈信 。这里作为传递给 morestack 的参数.gobuf arg to morestack .
+	morebuf gobuf  // goroutine 的堆栈信息 。这里作为传递给 morestack 的参数.gobuf arg to morestack .
 	divmod  uint32 // div/mod denominator for arm - known to liblink
 	_       uint32 // align next field to 8 bytes
 
@@ -582,20 +582,20 @@ type m struct {
 	fastrand      uint64
 	needextram    bool
 	traceback     uint8
-	ncgocall      uint64        // cgo 调用总数. number of cgo calls in total
-	ncgo          int32         // 当前正在调用 cgo 的总数. number of cgo calls currently in progress
-	cgoCallersUse atomic.Uint32 // 如果不为零，则暂时使用cgoCallers。if non-zero, cgoCallers in use temporarily
-	cgoCallers    *cgoCallers   // 如果在调用cgo时出现崩溃，则会出现cgo跟踪记录。cgo traceback if crashing in cgo call
-	park          note			//  M休眠时使用的信号量, 唤醒M时会通过它唤醒
-	alllink       *m 			// 记录所有工作线程的链表。on allm
-	schedlink     muintptr		// 下一个m, 当m在链表结构中会使用
-	lockedg       guintptr		// 当前M锁定的G。lockedm的对应值
-	createstack   [32]uintptr // 创建此线程的堆栈。stack that created this thread.
-	lockedExt     uint32      // 对外部LockOSThread的跟踪。tracking for external LockOSThread
-	lockedInt     uint32      // 对内部lockOSThread的跟踪。tracking for internal lockOSThread
-	nextwaitm     muintptr    // 下一个 m 将等待锁 next m waiting for lock
+	ncgocall      uint64                        // cgo 调用总数. number of cgo calls in total
+	ncgo          int32                         // 当前正在调用 cgo 的总数. number of cgo calls currently in progress
+	cgoCallersUse atomic.Uint32                 // 如果不为零，则暂时使用cgoCallers。if non-zero, cgoCallers in use temporarily
+	cgoCallers    *cgoCallers                   // 如果在调用cgo时出现崩溃，则会出现cgo跟踪记录。cgo traceback if crashing in cgo call
+	park          note                          //  M休眠时使用的信号量, 唤醒M时会通过它唤醒
+	alllink       *m                            // 记录所有工作线程的链表。on allm
+	schedlink     muintptr                      // 下一个m, 当m在链表结构中会使用
+	lockedg       guintptr                      // 当前M锁定的G。lockedm的对应值
+	createstack   [32]uintptr                   // 创建此线程的堆栈。stack that created this thread.
+	lockedExt     uint32                        // 对外部LockOSThread的跟踪。tracking for external LockOSThread
+	lockedInt     uint32                        // 对内部lockOSThread的跟踪。tracking for internal lockOSThread
+	nextwaitm     muintptr                      // 下一个 m 将等待锁 next m waiting for lock
 	waitunlockf   func(*g, unsafe.Pointer) bool // 等待解锁函数
-	waitlock      unsafe.Pointer		// 等待锁
+	waitlock      unsafe.Pointer                // 等待锁
 	waittraceev   byte
 	waittraceskip int
 	startingtrace bool

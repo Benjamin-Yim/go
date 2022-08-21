@@ -2,7 +2,7 @@ package runtime
 
 const (
 	debugSelect = false
-	debugSource = false
+	debugSource = true
 )
 const (
 	// stackDebug == 0: no logging

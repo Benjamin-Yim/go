@@ -579,8 +579,8 @@ var ptrnames = []string{
 // +------------------+ <- frame->sp
 
 type adjustinfo struct {
-	old   stack
-	delta uintptr // ptr distance from old to new stack (newbase - oldbase)
+	old   stack   // 旧栈的地址
+	delta uintptr // 新栈相对于旧栈的相对偏移增量。ptr distance from old to new stack (newbase - oldbase)
 	cache pcvalueCache
 
 	// sghi is the highest sudog.elem on the stack.
@@ -1016,6 +1016,9 @@ func round2(x int32) int32 {
 //go:nowritebarrierrec
 func newstack() {
 	thisg := getg()
+	if debugSource {
+		print("thisg is g", thisg.goid, "\n")
+	}
 	// TODO: double check all gp. shouldn't be getg().
 	if thisg.m.morebuf.g.ptr().stackguard0 == stackFork {
 		throw("stack growth after fork")
@@ -1028,7 +1031,9 @@ func newstack() {
 	}
 
 	gp := thisg.m.curg
-
+	if debugSource {
+		print("thisg.m.curg is g", gp.goid, "\n")
+	}
 	if thisg.m.curg.throwsplit {
 		// Update syscallsp, syscallpc in case traceback uses them.
 		morebuf := thisg.m.morebuf
