@@ -5575,6 +5575,7 @@ func sysmon() {
 		}
 		if delay > 10*1000 { // 延迟上限最终是 10ms。 up to 10ms
 			delay = 10 * 1000
+			println("cycles in success we had not wakeup more than 50 time,so delay time set 10ms")
 			if debugSource {
 				println("sysmon 查找循环可运行 goroutine 周期在 10ms")
 			}
