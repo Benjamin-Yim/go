@@ -598,15 +598,17 @@ const debugPcln = false
 
 func moduledataverify1(datap *moduledata) {
 	// Check that the pclntab's format is valid.
+	// 检查pclntab的格式是否有效。
 	hdr := datap.pcHeader
+	print("\nhdr.magic:", hex(hdr.magic), "\n")
 	if hdr.magic != 0xfffffff1 || hdr.pad1 != 0 || hdr.pad2 != 0 ||
 		hdr.minLC != sys.PCQuantum || hdr.ptrSize != goarch.PtrSize || hdr.textStart != datap.text {
-		println("runtime: pcHeader: magic=", hex(hdr.magic), "pad1=", hdr.pad1, "pad2=", hdr.pad2,
+		println("\nruntime: pcHeader: magic=", hex(hdr.magic), "pad1=", hdr.pad1, "pad2=", hdr.pad2,
 			"minLC=", hdr.minLC, "ptrSize=", hdr.ptrSize, "pcHeader.textStart=", hex(hdr.textStart),
 			"text=", hex(datap.text), "pluginpath=", datap.pluginpath)
 		throw("invalid function symbol table")
 	}
-
+	println("no pclntab throw")
 	// ftab is lookup table for function by program counter.
 	nftab := len(datap.ftab) - 1
 	for i := 0; i < nftab; i++ {
@@ -814,12 +816,15 @@ func (f *_func) isInlined() bool {
 	return f.entryoff == ^uint32(0) // see comment for funcinl.ones
 }
 
+// entry返回f的入口PC。
 // entry returns the entry PC for f.
 func (f funcInfo) entry() uintptr {
 	return f.datap.textAddr(f.entryoff)
 }
 
 // findfunc looks up function metadata for a PC.
+//
+//	findfunc查找一台PC的函数元数据。
 //
 // It is nosplit because it's part of the isgoexception
 // implementation.
@@ -873,6 +878,7 @@ func pcvalueCacheKey(targetpc uintptr) uintptr {
 	return (targetpc / goarch.PtrSize) % uintptr(len(pcvalueCache{}.entries))
 }
 
+// 返回PCData值，以及该值开始的PC。
 // Returns the PCData value, and the PC where this value starts.
 // TODO: the start PC is returned only when cache is nil.
 func pcvalue(f funcInfo, off uint32, targetpc uintptr, cache *pcvalueCache, strict bool) (int32, uintptr) {
@@ -1157,9 +1163,9 @@ func readvarint(p []byte) (read uint32, val uint32) {
 }
 
 type stackmap struct {
-	n        int32   // number of bitmaps
-	nbit     int32   // number of bits in each bitmap
-	bytedata [1]byte // bitmaps, each starting on a byte boundary
+	n        int32   // number of bitmaps. 位图的数量
+	nbit     int32   // number of bits in each bitmap,每个位图的位数
+	bytedata [1]byte // bitmaps, each starting on a byte boundary,位图，每个位图都从一个字节边界开始
 }
 
 //go:nowritebarrier

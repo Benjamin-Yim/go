@@ -639,6 +639,7 @@ func adjustpointer(adjinfo *adjustinfo, vpp unsafe.Pointer) {
 	}
 }
 
+// 来自编译器的关于堆栈框架布局的信息。
 // Information from the compiler about the layout of stack frames.
 // Note: this type must agree with reflect.bitVector.
 type bitvector struct {
@@ -655,6 +656,8 @@ func (bv *bitvector) ptrbit(i uintptr) uint8 {
 	return (b >> (i % 8)) & 1
 }
 
+// bv描述从地址scanp开始的内存。
+// 调整其中包含的任何指针。
 // bv describes the memory starting at address scanp.
 // Adjust any pointers contained therein.
 func adjustpointers(scanp unsafe.Pointer, bv *bitvector, adjinfo *adjustinfo, f funcInfo) {
@@ -961,6 +964,7 @@ func copystack(gp *g, newsize uintptr) {
 	// 调整 sudogs, 必要时与 channel 操作同步
 	ncopy := used
 	if !gp.activeStackChans {
+		// 没有
 		if newsize < old.hi-old.lo && gp.parkingOnChan.Load() {
 			// It's not safe for someone to shrink this stack while we're actively
 			// parking on a channel, but it is safe to grow since we do that
@@ -1364,6 +1368,7 @@ func freeStackSpans() {
 	unlock(&stackLarge.lock)
 }
 
+// getStackMap 返回本地变量和参数的实时指针图，以及框架的堆栈对象列表。
 // getStackMap returns the locals and arguments live pointer maps, and
 // stack object list for frame.
 func getStackMap(frame *stkframe, cache *pcvalueCache, debug bool) (locals, args bitvector, objs []stackObjectRecord) {
@@ -1380,6 +1385,8 @@ func getStackMap(frame *stkframe, cache *pcvalueCache, debug bool) (locals, args
 		// point, we want to use the entry map (-1), even if
 		// the first instruction of the function changes the
 		// stack map.
+		// 返回到CALL。如果我们处于函数入口点，我们要使用入口 map（-1），
+		// 即使函数的第一条指令改变了堆栈map。
 		targetpc--
 		pcdata = pcdatavalue(f, _PCDATA_StackMapIndex, targetpc, cache)
 	}
@@ -1400,7 +1407,7 @@ func getStackMap(frame *stkframe, cache *pcvalueCache, debug bool) (locals, args
 		minsize = sys.MinFrameSize
 	}
 	if size > minsize {
-		// 说明有参数
+		// 说明有本地变量有在栈中的
 		stackid := pcdata
 		stkmap := (*stackmap)(funcdata(f, _FUNCDATA_LocalsPointerMaps))
 		if stkmap == nil || stkmap.n <= 0 {

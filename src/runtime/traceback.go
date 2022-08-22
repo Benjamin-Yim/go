@@ -33,6 +33,7 @@ const usesLR = sys.MinFrameSize > 0
 // max ??
 // callback 调整指针将要回调的方法
 // v 调整幅度
+// gentraceback(^uintptr(0), ^uintptr(0), 0, gp, 0, nil, 0x7fffffff, adjustframe, noescape(unsafe.Pointer(&adjinfo)), 0)
 func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max int, callback func(*stkframe, unsafe.Pointer) bool, v unsafe.Pointer, flags uint) int {
 	if skip > 0 && callback != nil {
 		throw("gentraceback callback cannot be used with non-zero skip")
@@ -61,33 +62,37 @@ func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max in
 	var ctxt *funcval // Context pointer for unstarted goroutines. See issue #25897.
 
 	if pc0 == ^uintptr(0) && sp0 == ^uintptr(0) { // Signal to fetch saved values from gp.
-		if gp.syscallsp != 0 {
+		if gp.syscallsp != 0 { // 如果在 syscall 期间，那么就是 sysncallpc 和  syscallsp
 			pc0 = gp.syscallpc
 			sp0 = gp.syscallsp
 			if usesLR {
 				lr0 = 0
 			}
-		} else {
+		} else { // 如果不在系统调用期间，那么就是当前的 pc 和 sp
 			pc0 = gp.sched.pc
 			sp0 = gp.sched.sp
 			if usesLR {
 				lr0 = gp.sched.lr
 			}
+			// 上下文 ctxt, 目标方法指针
 			ctxt = (*funcval)(gp.sched.ctxt)
 		}
 	}
 
 	nprint := 0
-	var frame stkframe
-	frame.pc = pc0
-	frame.sp = sp0
+	var frame stkframe // 栈帧信息
+	frame.pc = pc0     // 要么是当前 g 的  pc 要么是当前 syscall 的 pc
+	frame.sp = sp0     // 要么是当前 g 的  sp 要么是当前 syscall 的 sp
 	if usesLR {
 		frame.lr = lr0
 	}
 	waspanic := false
 	cgoCtxt := gp.cgoCtxt
-	stack := gp.stack
+	stack := gp.stack // g 的栈信息
 	printing := pcbuf == nil && callback == nil
+	if debugSource {
+		print("\n printing := pcbuf == nil && callback == nil :", printing, "\n")
+	}
 
 	// If the PC is zero, it's likely a nil function call.
 	// Start in the caller's frame.
@@ -128,10 +133,15 @@ func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max in
 		return 0
 	}
 	frame.fn = f
-
+	if debugSource {
+		print("copystack 栈帧的方法名称frame.fn:", funcname(frame.fn), "栈帧的栈大小:", int(gp.stack.hi-gp.stack.lo), "\n")
+	}
 	var cache pcvalueCache
 
 	lastFuncID := funcID_normal
+	if debugSource {
+		print("\n lastFuncID:", lastFuncID, "\n")
+	}
 	n := 0
 	for n < max {
 		// Typically:
@@ -140,9 +150,16 @@ func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max in
 		//	fp is the frame pointer (caller's stack pointer) at that program counter, or nil if unknown.
 		//	stk is the stack containing sp.
 		//	The caller's program counter is lr, unless lr is zero, in which case it is *(uintptr*)sp.
+		// 通常情况下
+		// pc 是 将要运行的方法
+		// sp是该程序计数器的堆栈指针。
+		// fp是该程序计数器的帧指针（调用者的堆栈指针），如果未知，则为nil。
+		// stk是包含sp的堆栈。
+		// 调用者的程序计数器是lr，除非lr是零，在这种情况下，它是*(uintptr*)sp。
 		f = frame.fn
 		if f.pcsp == 0 {
 			// No frame information, must be external function, like race support.
+			// 没有 frame 信息，必须是外部功能，如竞赛支持。
 			// See golang.org/issue/13568.
 			break
 		}

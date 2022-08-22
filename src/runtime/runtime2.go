@@ -348,7 +348,7 @@ type gobuf struct {
 	sp   uintptr        // sp 栈指针位置. 保存CPU的rsp寄存器的值
 	pc   uintptr        // pc 程序计数器，运行到的程序位置. 保存CPU的rip寄存器的值
 	g    guintptr       // 记录当前这个gobuf对象属于哪个goroutine
-	ctxt unsafe.Pointer // 不常见，可能是一个分配在heap的函数变量，因此GC 需要追踪它，不过它有可能需要设置并进行清除，在有写屏障 的时候有些困难。
+	ctxt unsafe.Pointer // 不常见，可能是一个分配在heap的函数变量，因此GC 需要追踪它，不过它有可能需要设置并进行清除，在有写屏障 的时候有些困难。上下文 ctxt, 有时候会目标方法指针
 	ret  uintptr        // 保存系统调用的返回值，因为从系统调用返回之后如果p被其它工作线程抢占，则这个goroutine会被放入全局运行队列被其它工作线程调度，其它线程需要知道系统调用的返回值。
 	lr   uintptr
 	bp   uintptr // 用于支持帧指针的架构.for framepointer-enabled architectures
@@ -508,8 +508,8 @@ type g struct {
 	ancestors      *[]ancestorInfo // ancestor information goroutine(s) that created this goroutine (only used if debug.tracebackancestors)
 	startpc        uintptr         // goroutine函数的pc,go func 的pc 。pc of goroutine function
 	racectx        uintptr
-	waiting        *sudog         // sudog structures this g is waiting on (that have a valid elem ptr); in lock order
-	cgoCtxt        []uintptr      // cgo traceback context
+	waiting        *sudog         // 这个g正在等待的sudog结构（有一个有效的elem ptr）；按照锁的顺序。sudog structures this g is waiting on (that have a valid elem ptr); in lock order
+	cgoCtxt        []uintptr      // cgo traceback context。cgo追踪背景
 	labels         unsafe.Pointer // profiler labels
 	timer          *timer         // cached timer for time.Sleep
 	selectDone     uint32         // are we participating in a select and did someone win the race?
