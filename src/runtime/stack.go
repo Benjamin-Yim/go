@@ -660,16 +660,19 @@ func (bv *bitvector) ptrbit(i uintptr) uint8 {
 // 调整其中包含的任何指针。
 // bv describes the memory starting at address scanp.
 // Adjust any pointers contained therein.
+// scanp 局部变量的起始位置
 func adjustpointers(scanp unsafe.Pointer, bv *bitvector, adjinfo *adjustinfo, f funcInfo) {
 	minp := adjinfo.old.lo
 	maxp := adjinfo.old.hi
 	delta := adjinfo.delta
-	num := uintptr(bv.n)
+	num := uintptr(bv.n) // 局部变量的数量
 	// If this frame might contain channel receive slots, use CAS
 	// to adjust pointers. If the slot hasn't been received into
 	// yet, it may contain stack pointers and a concurrent send
 	// could race with adjusting those pointers. (The sent value
 	// itself can never contain stack pointers.)
+	// 如果这个帧可能包含信道接收槽，就用CAS来调整指针。如果这个槽还没有被接收到，
+	// 它可能包含堆栈指针，同时进行的发送可能会与调整这些指针相冲突。(发送值本身不能包含堆栈指针)。
 	useCAS := uintptr(scanp) < adjinfo.sghi
 	for i := uintptr(0); i < num; i += 8 {
 		if stackDebug >= 4 {
@@ -677,10 +680,12 @@ func adjustpointers(scanp unsafe.Pointer, bv *bitvector, adjinfo *adjustinfo, f 
 				print("        ", add(scanp, (i+j)*goarch.PtrSize), ":", ptrnames[bv.ptrbit(i+j)], ":", hex(*(*uintptr)(add(scanp, (i+j)*goarch.PtrSize))), " # ", i, " ", *addb(bv.bytedata, i/8), "\n")
 			}
 		}
+		// b 指向第几个变量的相对位置
 		b := *(addb(bv.bytedata, i/8))
 		for b != 0 {
 			j := uintptr(sys.Ctz8(b))
 			b &= b - 1
+			// 获取到其栈值的准确地址，指针将获取其指向的地址，如果是常量，则获取本身的地址
 			pp := (*uintptr)(add(scanp, (i+j)*goarch.PtrSize))
 		retry:
 			p := *pp
@@ -703,6 +708,9 @@ func adjustpointers(scanp unsafe.Pointer, bv *bitvector, adjinfo *adjustinfo, f 
 				} else {
 					*pp = p + delta
 				}
+			} else {
+				l := &p
+				println("*p=", uintptr(*l))
 			}
 		}
 	}
@@ -734,7 +742,9 @@ func adjustframe(frame *stkframe, arg unsafe.Pointer) bool {
 
 	// Adjust local variables if stack frame has been allocated.
 	if locals.n > 0 {
+		// 从顶部 - 局部变量的数量*每个栈的大小，回到底部。
 		size := uintptr(locals.n) * goarch.PtrSize
+		// 将指针指向底部，局部变量的开头
 		adjustpointers(unsafe.Pointer(frame.varp-size), &locals, adjinfo, f)
 	}
 

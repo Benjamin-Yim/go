@@ -952,6 +952,7 @@ const (
 	_SigIgn                  // _SIG_DFL action is to ignore the signal
 )
 
+// 由链接器准备的内存中每个函数信息的布局
 // Layout of in-memory per-function information prepared by linker
 // See https://golang.org/s/go12symtab.
 // Keep in sync with linker (../cmd/link/internal/ld/pcln.go:/pclntab)
@@ -971,7 +972,7 @@ type _func struct {
 	funcID    funcID // set for certain special runtime functions
 	flag      funcFlag
 	_         [1]byte // pad
-	nfuncdata uint8   // must be last, must end on a uint32-aligned boundary
+	nfuncdata uint8   // 必须是最后一个，必须在一个uint32对齐的边界上结束.must be last, must end on a uint32-aligned boundary
 }
 
 // Pseudo-Func that is returned for PCs that occur in inlined code.

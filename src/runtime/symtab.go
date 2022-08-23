@@ -1163,9 +1163,9 @@ func readvarint(p []byte) (read uint32, val uint32) {
 }
 
 type stackmap struct {
-	n        int32   // number of bitmaps. 位图的数量
-	nbit     int32   // number of bits in each bitmap,每个位图的位数
-	bytedata [1]byte // bitmaps, each starting on a byte boundary,位图，每个位图都从一个字节边界开始
+	n        int32   // 位图的数量. number of bitmaps.
+	nbit     int32   // 每个位图的位数. number of bits in each bitmap,
+	bytedata [1]byte // 位图，每个位图都从一个字节边界开始. bitmaps, each starting on a byte boundary,
 }
 
 //go:nowritebarrier

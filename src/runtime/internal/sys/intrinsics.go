@@ -54,6 +54,7 @@ func Ctz32(x uint32) int {
 }
 
 // Ctz8 returns the number of trailing zero bits in x; the result is 8 for x == 0.
+// Ctz8返回x中尾部零位的数量；对于x == 0，结果是8。
 func Ctz8(x uint8) int {
 	return int(ntz8tab[x])
 }
