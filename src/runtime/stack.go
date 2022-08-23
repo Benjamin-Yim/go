@@ -697,6 +697,9 @@ func adjustpointers(scanp unsafe.Pointer, bv *bitvector, adjinfo *adjustinfo, f 
 				throw("invalid pointer found on stack")
 			}
 			if minp <= p && p < maxp {
+				if debugMoreStack {
+					println("*>>p=", *(*int)(unsafe.Pointer(p)))
+				}
 				if stackDebug >= 3 {
 					print("adjust ptr ", hex(p), " ", funcname(f), "\n")
 				}
@@ -709,9 +712,9 @@ func adjustpointers(scanp unsafe.Pointer, bv *bitvector, adjinfo *adjustinfo, f 
 					*pp = p + delta
 				}
 			} else {
-				var ptr uintptr = uintptr(p)
-				pt := unsafe.Pointer(ptr)
-				println("*p=", *(*int)(pt))
+				if debugMoreStack {
+					println("*p=", *(*int)(unsafe.Pointer(p)))
+				}
 			}
 		}
 	}

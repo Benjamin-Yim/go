@@ -1,21 +1,23 @@
 package main
 
-func c(a, b int) int {
-	if b < 0 {
-		return a
-	}
-	return a + c(a, b-1)
-}
+import "math/rand"
 
 //func c(a, b int) int {
 //	if b < 0 {
 //		return a
 //	}
-//	pa := &a
-//	pb := &b
-//	pc := *pa * *pb * rand.Int()
-//	return pc + c(*pa, *pb-1)
+//	return a + c(a, b-1)
 //}
+
+func c(a, b int) int {
+	if b < 0 {
+		return a
+	}
+	pa := &a
+	pb := &b
+	pc := *pa * *pb * rand.Int()
+	return pc + c(*pa, *pb-1)
+}
 
 func f(s string, a, b int) int {
 	return a + b + len(s)
