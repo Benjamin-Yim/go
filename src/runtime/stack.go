@@ -709,8 +709,9 @@ func adjustpointers(scanp unsafe.Pointer, bv *bitvector, adjinfo *adjustinfo, f 
 					*pp = p + delta
 				}
 			} else {
-				l := &p
-				println("*p=", uintptr(*l))
+				var ptr uintptr = uintptr(p)
+				pt := unsafe.Pointer(ptr)
+				println("*p=", *(*int)(pt))
 			}
 		}
 	}
