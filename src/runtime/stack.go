@@ -742,6 +742,7 @@ func adjustframe(frame *stkframe, arg unsafe.Pointer) bool {
 		return true
 	}
 	// 获取栈帧中的信息：本地变量、参数、对象
+	// 因为栈空间不属于arena区域, 栈空间的指针信息将会在函数信息里面.
 	locals, args, objs := getStackMap(frame, &adjinfo.cache, true)
 
 	// Adjust local variables if stack frame has been allocated.
@@ -1423,6 +1424,7 @@ func getStackMap(frame *stkframe, cache *pcvalueCache, debug bool) (locals, args
 	if size > minsize {
 		// 说明有本地变量有在栈中的
 		stackid := pcdata
+		// 因为栈空间不属于arena区域, 栈空间的指针信息将会在函数信息里面.
 		stkmap := (*stackmap)(funcdata(f, _FUNCDATA_LocalsPointerMaps))
 		if stkmap == nil || stkmap.n <= 0 {
 			print("runtime: frame ", funcname(f), " untyped locals ", hex(frame.varp-size), "+", hex(size), "\n")
