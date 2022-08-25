@@ -15,7 +15,8 @@ func c(a, b int) int {
 	}
 	pa := &a
 	pb := &b
-	pc := *pa * *pb * rand.Int()
+	pc := *pa * *pb * rand.Intn(5)
+	//println("pc:", pc, "pa:", *pa, "pb:", *pb)
 	return pc + c(*pa, *pb-1)
 }
 

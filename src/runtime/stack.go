@@ -697,9 +697,11 @@ func adjustpointers(scanp unsafe.Pointer, bv *bitvector, adjinfo *adjustinfo, f 
 				throw("invalid pointer found on stack")
 			}
 			if minp <= p && p < maxp {
+				// 在栈范围内
 				if stackDebug >= 3 {
 					print("adjust ptr ", hex(p), " ", funcname(f), "\n")
 				}
+				// 调整栈指针
 				if useCAS {
 					ppu := (*unsafe.Pointer)(unsafe.Pointer(pp))
 					if !atomic.Casp1(ppu, unsafe.Pointer(p), unsafe.Pointer(p+delta)) {
@@ -708,9 +710,8 @@ func adjustpointers(scanp unsafe.Pointer, bv *bitvector, adjinfo *adjustinfo, f 
 				} else {
 					*pp = p + delta
 				}
-			} else {
 				if debugMoreStack {
-					println("*p=", *(*int)(unsafe.Pointer(p)))
+					println("在栈范围内 *p=", *(*int)(unsafe.Pointer((**int)(unsafe.Pointer(p)))))
 				}
 			}
 		}
