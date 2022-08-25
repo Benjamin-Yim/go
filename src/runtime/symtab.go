@@ -337,6 +337,10 @@ const (
 // specially by the runtime.
 // Note that in some situations involving plugins, there may be multiple
 // copies of a particular special runtime function.
+//
+//	一个FuncID标识了需要被运行时特别对待的特殊函数。请注意，
+//	在某些涉及到插件的情况下，一个特定的特殊运行时函数可能有多个副本。
+//
 // Note: this list must match the list in cmd/internal/objabi/funcid.go.
 type funcID uint8
 
@@ -1108,6 +1112,7 @@ func funcdata(f funcInfo, i uint8) unsafe.Pointer {
 	if i < 0 || i >= f.nfuncdata {
 		return nil
 	}
+	// 提前加载gofunc地址，以便我们在缓存错过时进行计算。
 	base := f.datap.gofunc // load gofunc address early so that we calculate during cache misses
 	p := uintptr(unsafe.Pointer(&f.nfuncdata)) + unsafe.Sizeof(f.nfuncdata) + uintptr(f.npcdata)*4 + uintptr(i)*4
 	off := *(*uint32)(unsafe.Pointer(p))

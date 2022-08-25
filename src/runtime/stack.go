@@ -697,9 +697,6 @@ func adjustpointers(scanp unsafe.Pointer, bv *bitvector, adjinfo *adjustinfo, f 
 				throw("invalid pointer found on stack")
 			}
 			if minp <= p && p < maxp {
-				if debugMoreStack {
-					println("*>>p=", *(*int)(unsafe.Pointer(p)))
-				}
 				if stackDebug >= 3 {
 					print("adjust ptr ", hex(p), " ", funcname(f), "\n")
 				}
@@ -749,7 +746,7 @@ func adjustframe(frame *stkframe, arg unsafe.Pointer) bool {
 	if locals.n > 0 {
 		// 从顶部 - 局部变量的数量*每个栈的大小，回到底部。
 		size := uintptr(locals.n) * goarch.PtrSize
-		// 将指针指向底部，局部变量的开头
+		// 将指针指向底部，局部变量的开头，开始调整指针
 		adjustpointers(unsafe.Pointer(frame.varp-size), &locals, adjinfo, f)
 	}
 
