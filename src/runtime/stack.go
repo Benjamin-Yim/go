@@ -139,7 +139,7 @@ const (
 //	order = log_2(size/FixedStack)
 //
 // There is a free list for each order.
-// 正常小栈栈池
+// 全局的栈缓存，分配 32KB以下内存
 var stackpool [_NumStackOrders]struct {
 	item stackpoolItem
 	_    [(cpu.CacheLinePadSize - unsafe.Sizeof(stackpoolItem{})%cpu.CacheLinePadSize) % cpu.CacheLinePadSize]byte
@@ -152,12 +152,13 @@ type stackpoolItem struct {
 }
 
 // Global pool of large stack spans.
-// 全局 span 大栈的栈池
+// 全局的栈缓存，分配 32KB 以上内存
 var stackLarge struct {
 	lock mutex
 	free [heapAddrBits - pageShift]mSpanList // free lists by log_2(s.npages)
 }
 
+// 初始化stackpool/stackLarge全局变量
 func stackinit() {
 	if _StackCacheSize&_PageMask != 0 {
 		throw("cache size must be a multiple of page size")
@@ -195,6 +196,7 @@ func stackpoolalloc(order uint8) gclinkptr {
 	if s == nil {
 		// no free stacks. Allocate another span worth.
 		// 缓存已空，从 mheap 上进行分配
+		// _StackCacheSize = 32 * 1024
 		s = mheap_.allocManual(_StackCacheSize>>_PageShift, spanAllocStack) // 栈池空就从 span 下增长
 		if s == nil {
 			throw("out of memory")
@@ -216,12 +218,16 @@ func stackpoolalloc(order uint8) gclinkptr {
 		list.insert(s)
 	}
 	x := s.manualFreeList
+	// 代表被分配完毕
 	if x.ptr() == nil {
 		throw("span has no free stacks")
 	}
 	// 栈指针指向下一个
 	s.manualFreeList = x.ptr().next
 	s.allocCount++
+	// 因为分配的时候第一个内存块是 nil
+	// 所以当指针为nil 的时候代表被分配完毕
+	// 那么需要将该对象从 list 的头节点移除
 	if s.manualFreeList.ptr() == nil {
 		// all stacks in s are allocated.
 		// 当前 span 空间使用没了
@@ -352,6 +358,7 @@ func stackalloc(n uint32) stack {
 	// Stackalloc must be called on scheduler stack, so that we
 	// never try to grow the stack during the code that stackalloc runs.
 	// Doing so would cause a deadlock (issue 1547).
+	// 这里的 G 是 G0
 	thisg := getg()
 	if thisg != thisg.m.g0 {
 		throw("stackalloc not on scheduler stack")
@@ -379,7 +386,7 @@ func stackalloc(n uint32) stack {
 	// 小的栈空间，按照标准的空闲列表来分配，
 	// 如果需要大的栈空间需要使用 span 来分配
 	var v unsafe.Pointer
-	// 检查是否从缓存分配
+	// 如果申请的栈空间小于 32KB
 	if n < _FixedStack<<_NumStackOrders && n < _StackCacheSize {
 		// 小栈分配
 		order := uint8(0)
