@@ -4726,14 +4726,14 @@ func InitTables() {
 		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 			return s.newValue3(ssa.OpAdd64carry, types.NewTuple(types.Types[types.TUINT64], types.Types[types.TUINT64]), args[0], args[1], args[2])
 		},
-		sys.AMD64, sys.ARM64, sys.PPC64, sys.S390X)
-	alias("math/bits", "Add", "math/bits", "Add64", sys.ArchAMD64, sys.ArchARM64, sys.ArchPPC64, sys.ArchPPC64LE, sys.ArchS390X)
+		sys.AMD64, sys.ARM64, sys.PPC64, sys.S390X, sys.RISCV64)
+	alias("math/bits", "Add", "math/bits", "Add64", sys.ArchAMD64, sys.ArchARM64, sys.ArchPPC64, sys.ArchPPC64LE, sys.ArchS390X, sys.ArchRISCV64)
 	addF("math/bits", "Sub64",
 		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 			return s.newValue3(ssa.OpSub64borrow, types.NewTuple(types.Types[types.TUINT64], types.Types[types.TUINT64]), args[0], args[1], args[2])
 		},
-		sys.AMD64, sys.ARM64, sys.PPC64, sys.S390X)
-	alias("math/bits", "Sub", "math/bits", "Sub64", sys.ArchAMD64, sys.ArchARM64, sys.ArchS390X)
+		sys.AMD64, sys.ARM64, sys.PPC64, sys.S390X, sys.RISCV64)
+	alias("math/bits", "Sub", "math/bits", "Sub64", sys.ArchAMD64, sys.ArchARM64, sys.ArchS390X, sys.ArchRISCV64)
 	addF("math/bits", "Div64",
 		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 			// check for divide-by-zero/overflow and panic with appropriate message
@@ -7324,7 +7324,8 @@ func genssa(f *ssa.Func, pp *objw.Progs) {
 func defframe(s *State, e *ssafn, f *ssa.Func) {
 	pp := s.pp
 
-	frame := types.RoundUp(s.maxarg+e.stksize, int64(types.RegSize))
+	s.maxarg = types.RoundUp(s.maxarg, e.stkalign)
+	frame := s.maxarg + e.stksize
 	if Arch.PadFrame != nil {
 		frame = Arch.PadFrame(frame)
 	}
@@ -7762,7 +7763,14 @@ type ssafn struct {
 	strings    map[string]*obj.LSym // map from constant string to data symbols
 	stksize    int64                // stack size for current frame
 	stkptrsize int64                // prefix of stack containing pointers
-	log        bool                 // print ssa debug to the stdout
+
+	// alignment for current frame.
+	// NOTE: when stkalign > PtrSize, currently this only ensures the offsets of
+	// objects in the stack frame are aligned. The stack pointer is still aligned
+	// only PtrSize.
+	stkalign int64
+
+	log bool // print ssa debug to the stdout
 }
 
 // StringData returns a symbol which

@@ -310,10 +310,10 @@ func forcegchelper() {
 	lockInit(&forcegc.lock, lockRankForcegc)
 	for {
 		lock(&forcegc.lock)
-		if forcegc.idle != 0 {
+		if forcegc.idle.Load() {
 			throw("forcegc: phase error")
 		}
-		atomic.Store(&forcegc.idle, 1)
+		forcegc.idle.Store(true)
 		goparkunlock(&forcegc.lock, waitReasonForceGCIdle, traceEvGoBlock, 1)
 		// this goroutine is explicitly resumed by sysmon
 		if debug.gctrace > 0 {
@@ -2834,7 +2834,7 @@ top:
 	// 如果没有 waiter 或 netpoll 中的线程已被阻塞，则可以安全地跳过它。
 	// 如果有任何类型的逻辑竞争与被阻塞的线程（例如它已经从 netpoll 返回，但尚未设置 lastpoll）
 	// 该线程无论如何都将阻塞 netpoll。
-	if netpollinited() && atomic.Load(&netpollWaiters) > 0 && sched.lastpoll.Load() != 0 {
+	if netpollinited() && netpollWaiters.Load() > 0 && sched.lastpoll.Load() != 0 {
 		if debugSource {
 			println("调用 netpoll 来自 findRunnable")
 		}
@@ -3067,7 +3067,7 @@ top:
 	// Poll network until next timer.
 	// 再次检查网络事件反应器是否有待运行的G,
 	// 这里对netpoll的调用会阻塞, 直到某个fd收到了事件
-	if netpollinited() && (atomic.Load(&netpollWaiters) > 0 || pollUntil != 0) && sched.lastpoll.Swap(0) != 0 {
+	if netpollinited() && (netpollWaiters.Load() > 0 || pollUntil != 0) && sched.lastpoll.Swap(0) != 0 {
 		sched.pollUntil.Store(pollUntil)
 		if mp.p != 0 {
 			throw("findrunnable: netpoll with p")
@@ -3148,7 +3148,7 @@ func pollWork() bool {
 	if !runqempty(p) {
 		return true
 	}
-	if netpollinited() && atomic.Load(&netpollWaiters) > 0 && sched.lastpoll.Load() != 0 {
+	if netpollinited() && netpollWaiters.Load() > 0 && sched.lastpoll.Load() != 0 {
 		if list := netpoll(0); !list.empty() {
 			injectglist(&list)
 			return true
@@ -5699,9 +5699,9 @@ func sysmon() {
 		}
 		// check if we need to force a GC
 		// 验证我们是否需要强制 GC
-		if t := (gcTrigger{kind: gcTriggerTime, now: now}); t.test() && atomic.Load(&forcegc.idle) != 0 {
+		if t := (gcTrigger{kind: gcTriggerTime, now: now}); t.test() && forcegc.idle.Load() {
 			lock(&forcegc.lock)
-			forcegc.idle = 0
+			forcegc.idle.Store(false)
 			var list gList
 			list.push(forcegc.g)
 			injectglist(&list)
