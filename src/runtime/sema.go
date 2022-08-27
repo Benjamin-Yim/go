@@ -4,7 +4,7 @@
 
 // Semaphore implementation exposed to Go.
 // Intended use is provide a sleep and wakeup
-// primitive that can be used in the contended case
+// primitive（源语） that can be used in the contended case
 // of other synchronization primitives.
 // Thus it targets the same goal as Linux's futex,
 // but it has much simpler semantics.

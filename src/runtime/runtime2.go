@@ -287,7 +287,7 @@ func (gp *guintptr) cas(old, new guintptr) bool {
 // setGNoWB performs *gp = new without a write barrier.
 // For times when it's impractical to use a guintptr.
 //
-// setGNoWB 当使用 guintptr 不可行时，在没有 write barrier 下执行 *gp = new
+// setGNoWB 当使用 guintptr 不可行时，在没有 写屏障的情况下执行 *gp = new
 //
 //go:nosplit
 //go:nowritebarrier
@@ -364,6 +364,14 @@ type gobuf struct {
 //
 // sudogs are allocated from a special pool. Use acquireSudog and
 // releaseSudog to allocate and free them.
+//
+// sudog 代表等待列表中的一个g，例如在一个通道上发送/接收。
+//
+// sudog是必要的，因为g ↔ 同步对象的关系是多对多的。一个g可以在许多等待列表上，
+// 所以一个g可能有许多sudogs；而许多g可能在同一个同步对象上等待，所以一个对象可能有许多sudogs。
+//
+// sudogs 是从一个特殊的池中分配的。 使用 acquireSudog 和 releaseSudog 分配和释放它们。
+//
 // 列表的实现是 sudog，其实就是一个对 g 的结构的封装
 type sudog struct {
 	// The following fields are protected by the hchan.lock of the
@@ -374,7 +382,7 @@ type sudog struct {
 
 	next *sudog
 	prev *sudog
-	elem unsafe.Pointer // 指向来源目标的内存的指针. data element (may point to stack)
+	elem unsafe.Pointer // 数据元素，可能指向栈. data element (may point to stack)
 
 	// The following fields are never accessed concurrently.
 	// For channels, waitlink is only accessed by g.
@@ -395,7 +403,7 @@ type sudog struct {
 	// because c was closed.
 	success bool
 
-	parent   *sudog // semaRoot binary tree
+	parent   *sudog // semaRoot 二叉树，binary tree
 	waitlink *sudog // g.waiting list or semaRoot
 	waittail *sudog // semaRoot
 	c        *hchan // channel
@@ -956,18 +964,18 @@ const (
 // Keep in sync with linker (../cmd/link/internal/ld/pcln.go:/pclntab)
 // and with package debug/gosym and with symtab.go in package runtime.
 type _func struct {
-	entryoff uint32 // start pc, as offset from moduledata.text/pcHeader.textStart
-	nameoff  int32  // function name
+	entryoff uint32 // 入口，PC 开始的地址。start pc, as offset from moduledata.text/pcHeader.textStart
+	nameoff  int32  // 方法名称。function name
 
-	args        int32  // in/out args size
+	args        int32  // 进出参数大小。in/out args size
 	deferreturn uint32 // offset of start of a deferreturn call instruction from entry, if any.
 
 	pcsp      uint32
 	pcfile    uint32
 	pcln      uint32
 	npcdata   uint32
-	cuOffset  uint32 // runtime.cutab offset of this function's CU
-	funcID    funcID // set for certain special runtime functions
+	cuOffset  uint32 // 此函数的 CU 的 runtime.cutab 偏移量。runtime.cutab offset of this function's CU
+	funcID    funcID // 为某些特殊的运行时函数设置。set for certain special runtime functions
 	flag      funcFlag
 	_         [1]byte // pad
 	nfuncdata uint8   // 必须是最后一个，必须在一个uint32对齐的边界上结束.must be last, must end on a uint32-aligned boundary
@@ -1094,10 +1102,11 @@ type stkframe struct {
 	varp     uintptr    // 局部变量的顶部。top of local variables
 	argp     uintptr    // 方法参数的指针。pointer to function arguments
 	arglen   uintptr    // 参数长度字符数组。number of bytes at argp
-	argmap   *bitvector // force use of this argmap
+	argmap   *bitvector // 强制使用这个 argmap。force use of this argmap
 }
 
 // ancestorInfo records details of where a goroutine was started.
+// ancestorInfo 记录 goroutine 开始位置的详细信息。
 type ancestorInfo struct {
 	pcs  []uintptr // pcs from the stack of this goroutine
 	goid uint64    // goroutine id of this goroutine; original goroutine possibly dead
