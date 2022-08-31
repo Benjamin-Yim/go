@@ -30,7 +30,7 @@ var sigtable = [...]sigTabT{
 	/* 20 */ {_SigNotify + _SigDefault + _SigIgn, "SIGTSTP: keyboard stop"},
 	/* 21 */ {_SigNotify + _SigDefault + _SigIgn, "SIGTTIN: background read from tty"},
 	/* 22 */ {_SigNotify + _SigDefault + _SigIgn, "SIGTTOU: background write to tty"},
-	/* 23 */ {_SigNotify + _SigIgn, "SIGURG: urgent condition on socket"},
+	/* 23 */ {_SigNotify + _SigIgn, "SIGURG: urgent condition on socket"}, // 抢占信号
 	/* 24 */ {_SigNotify, "SIGXCPU: cpu limit exceeded"},
 	/* 25 */ {_SigNotify, "SIGXFSZ: file size limit exceeded"},
 	/* 26 */ {_SigNotify, "SIGVTALRM: virtual alarm clock"},

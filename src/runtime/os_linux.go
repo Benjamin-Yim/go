@@ -485,10 +485,13 @@ func setsig(i uint32, fn uintptr) {
 	if GOARCH == "386" || GOARCH == "amd64" {
 		sa.sa_restorer = abi.FuncPCABI0(sigreturn)
 	}
+	// fn 等于 sighandler 的时候，调用的函数会被替换成 sigtramp
 	if fn == abi.FuncPCABIInternal(sighandler) { // abi.FuncPCABIInternal(sighandler) matches the callers in signal_unix.go
+		// CGO 相关
 		if iscgo {
 			fn = abi.FuncPCABI0(cgoSigtramp)
 		} else {
+			// 替换为调用 sigtramp
 			fn = abi.FuncPCABI0(sigtramp)
 		}
 	}

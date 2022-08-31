@@ -301,19 +301,20 @@ func canPreemptM(mp *m) bool {
 //
 // asyncPreempt is implemented in assembly.
 //
-// asyncPreempt 保存了所有用户寄存器，并调用 asyncPreempt2
-//
 // 当栈扫描遭遇 asyncPreempt 栈帧时，将会保守的扫描调用方栈帧
+// asyncPreempt 保存用户态寄存器后调用asyncPreempt2
 func asyncPreempt()
 
 //go:nosplit
 func asyncPreempt2() {
 	if debugSource {
-		println("强制抢占")
+		println("强制抢占 from asyncPreempt2")
 	}
 	gp := getg()
 	gp.asyncSafePoint = true
 	// 重新进入调度循环进而调度其他 Goroutine（preemptPark 和 gopreempt_m）
+	// preemptStop 会在调用 runtime/preempt.go的 suspendG 函数的时候将
+	// _Grunning 状态的 Goroutine 标记成可以被抢占 gp.preemptStop = true，表示该 G 可以被抢占。
 	if gp.preemptStop {
 		mcall(preemptPark)
 	} else {

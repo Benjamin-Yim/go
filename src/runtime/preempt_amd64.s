@@ -50,6 +50,7 @@ TEXT ·asyncPreempt(SB),NOSPLIT|NOFRAME,$0-0
 	MOVUPS X13, 320(SP)
 	MOVUPS X14, 336(SP)
 	MOVUPS X15, 352(SP)
+	// 保存用户态寄存器后调用 runtime/preempt.go 的 asyncPreempt2 函数
 	CALL ·asyncPreempt2(SB)
 	MOVUPS 352(SP), X15
 	MOVUPS 336(SP), X14

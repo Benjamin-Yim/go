@@ -112,6 +112,7 @@ var signalsOK bool
 //go:nosplit
 //go:nowritebarrierrec
 func initsig(preinit bool) {
+	// 预初始化
 	if !preinit {
 		// It's now OK for signal handlers to run.
 		signalsOK = true
@@ -122,9 +123,10 @@ func initsig(preinit bool) {
 	if (isarchive || islibrary) && !preinit {
 		return
 	}
-
+	//遍历信号数组
 	for i := uint32(0); i < _NSIG; i++ {
 		t := &sigtable[i]
+		//略过信号：SIGKILL、SIGSTOP、SIGTSTP、SIGCONT、SIGTTIN、SIGTTOU
 		if t.flags == 0 || t.flags&_SigDefault != 0 {
 			continue
 		}
@@ -145,6 +147,7 @@ func initsig(preinit bool) {
 		}
 
 		handlingSig[i] = 1
+		//setsig 函数进行注册信号处理器
 		setsig(i, abi.FuncPCABIInternal(sighandler))
 	}
 }
@@ -344,14 +347,16 @@ func doSigPreempt(gp *g, ctxt *sigctxt) {
 	// preempt.
 	// 检查 G 是否需要被抢占、抢占是否安全
 	if wantAsyncPreempt(gp) {
+		// 检查是否能安全的进行抢占
 		if ok, newpc := isAsyncSafePoint(gp, ctxt.sigpc(), ctxt.sigsp(), ctxt.siglr()); ok {
 			// Adjust the PC and inject a call to asyncPreempt.
-			// 插入抢占调用
+			// 修改寄存器,并执行抢占调用
 			ctxt.pushCall(abi.FuncPCABI0(asyncPreempt), newpc)
 		}
 	}
 
 	// Acknowledge the preemption.
+	// 更新一下抢占相关字段
 	gp.m.preemptGen.Add(1)
 	gp.m.signalPending.Store(0)
 
@@ -368,6 +373,11 @@ const preemptMSupported = true
 // marked for preemption and the goroutine is at an asynchronous
 // safe-point, it will preempt the goroutine. It always atomically
 // increments mp.preemptGen after handling a preemption request.
+//
+// 使用 preemptM 发送抢占信号的地方主要有下面几个：
+//  1. Go 后台监控 runtime.sysmon 检测超时发送抢占信号；
+//  2. Go GC 栈扫描发送抢占信号；
+//  3. Go GC STW 的时候调用 preemptall 抢占所有 P，让其暂停；
 //
 // preemptM 向 mp 发送抢占请求。该请求可以异步处理，也可以与对 M 的其他请求合并。
 // 接收到该请求后，如果正在运行的 G 或 P 被标记为抢占，并且 Goroutine 处于异步安全点，
@@ -389,6 +399,11 @@ func preemptM(mp *m) {
 		// live-lock problem. Apparently this could happen on darwin. See
 		// issue #37741.
 		// Only send a signal if there isn't already one pending.
+		//
+		// preemptM 向 M 发送抢占请求。
+		// 接收到该请求后，如果正在运行的 G 或 P 被标记为抢占，并且 Goroutine 处于异步安全点，
+		// 它将抢占 Goroutine。
+		// 调用 signalM 将在初始化的安装的 _SIGURG 信号发送到指定的 M 上
 		signalM(mp, sigPreempt)
 	}
 
@@ -662,6 +677,7 @@ func sighandler(sig uint32, info *siginfo, ctxt unsafe.Pointer, gp *g) {
 	// 可能是一个抢占信号
 	if sig == sigPreempt && debug.asyncpreemptoff == 0 && !delayedSignal {
 		// Might be a preemption signal.
+		// 处理抢占信号
 		doSigPreempt(gp, c)
 		// Even if this was definitely a preemption signal, it
 		// may have been coalesced with another signal, so we

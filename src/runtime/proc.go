@@ -734,7 +734,7 @@ func schedinit() {
 
 	lock(&sched.lock)
 	sched.lastpoll.Store(nanotime())
-	procs := ncpu// 把p数量从1调整到默认的CPU Core数量
+	procs := ncpu // 把p数量从1调整到默认的CPU Core数量
 	if n, ok := atoi32(gogetenv("GOMAXPROCS")); ok && n > 0 {
 		procs = n
 	}
@@ -2415,16 +2415,16 @@ func startm(pp *p, spinning bool) {
 	// context, otherwise such preemption could occur on function entry to
 	// startm. Callers passing a nil P may be preemptible, so we must
 	// disable preemption before acquiring a P from pidleget below.
-	mp := acquirem() // 获取 m
-	lock(&sched.lock)// 禁止M被其他 p 抢占
-	if pp == nil {// 是空的
+	mp := acquirem()  // 获取 m
+	lock(&sched.lock) // 禁止M被其他 p 抢占
+	if pp == nil {    // 是空的
 		if spinning {
 			// TODO(prattmic): All remaining calls to this function
 			// with _p_ == nil could be cleaned up to find a P
 			// before calling startm.
 			throw("startm: P required for spinning=true")
 		}
-		pp, _ = pidleget(0)// 获取一个空闲的P
+		pp, _ = pidleget(0) // 获取一个空闲的P
 		if pp == nil {
 			unlock(&sched.lock)
 			releasem(mp)
@@ -2588,7 +2588,7 @@ func wakep() {
 	// see at least one running M (ours).
 	unlock(&sched.lock)
 
-	startm(pp, true)// 如果当前有空闲的P, 但是无自旋的M(nmspinning等于0), 并且主函数已执行则唤醒或新建一个M
+	startm(pp, true) // 如果当前有空闲的P, 但是无自旋的M(nmspinning等于0), 并且主函数已执行则唤醒或新建一个M
 
 	releasem(mp)
 }
@@ -2748,7 +2748,7 @@ func findRunnable() (gp *g, inheritTime, tryWakeP bool) {
 
 top:
 	pp := mp.p.ptr()
-	if sched.gcwaiting.Load() {// 判断是否需要 GC
+	if sched.gcwaiting.Load() { // 判断是否需要 GC
 		gcstopm()
 		goto top
 	}
@@ -2787,8 +2787,8 @@ top:
 	// 为了公平起见, 每61次调度从全局运行队列获取一次G,
 	// (一直从本地获取可能导致全局运行队列中的G不被运行)
 	if pp.schedtick%61 == 0 && sched.runqsize > 0 {
-		lock(&sched.lock)//所有工作线程都能访问全局运行队列，所以需要加锁
-		gp := globrunqget(pp, 1)//从全局运行队列中获取1个goroutine
+		lock(&sched.lock)        //所有工作线程都能访问全局运行队列，所以需要加锁
+		gp := globrunqget(pp, 1) //从全局运行队列中获取1个goroutine
 		unlock(&sched.lock)
 		if gp != nil {
 			return gp, false, false
@@ -3749,8 +3749,11 @@ func preemptPark(gp *g) {
 	// up. Hence, we set the scan bit to lock down further
 	// transitions until we can dropg.
 	casGToPreemptScan(gp, _Grunning, _Gscan|_Gpreempted)
+	// 使当前 m 放弃 g，让出线程
 	dropg()
+	// 修改当前 Goroutine 的状态到 _Gpreempted
 	casfrom_Gscanstatus(gp, _Gscan|_Gpreempted, _Gpreempted)
+	// 并继续执行调度
 	schedule()
 }
 
@@ -5692,6 +5695,7 @@ func sysmon() {
 		// retake P's blocked in syscalls
 		// and preempt long running G's
 		// retake P 阻塞在系统调用并且抢占长时间运行的 G
+		// 调用 runtime.retake抢占处于运行或者系统调用中的处理器
 		if retake(now) != 0 {
 			idle = 0
 		} else {
@@ -5731,7 +5735,12 @@ type sysmontick struct {
 // forcePreemptNS is the time slice given to a G before it is
 // preempted.
 const forcePreemptNS = 10 * 1000 * 1000 // 10ms
+
 // retake 函数负责处理抢
+// retake 主要分为两部分：
+//
+//	1.调用 preemptone 抢占当前处理器；
+//	2.调用 handoffp 让出处理器的使用权；
 func retake(now int64) uint32 {
 	n := 0
 	// Prevent allp slice changes. This lock will be completely
@@ -5740,7 +5749,7 @@ func retake(now int64) uint32 {
 	// We can't use a range loop over allp because we may
 	// temporarily drop the allpLock. Hence, we need to re-fetch
 	// allp each time around the loop.
-	// 枚举所有的P
+	// 遍历 allp 数组
 	for i := 0; i < len(allp); i++ {
 		pp := allp[i]
 		if pp == nil {
@@ -5753,12 +5762,15 @@ func retake(now int64) uint32 {
 		sysretake := false
 		if s == _Prunning || s == _Psyscall {
 			// Preempt G if it's running for too long.
+			// 调度次数
 			t := int64(pp.schedtick)
 			if int64(pd.schedtick) != t {
 				pd.schedtick = uint32(t)
+				// 处理器上次调度时间
 				pd.schedwhen = now
 			} else if pd.schedwhen+forcePreemptNS <= now {
-				// 如果P在运行中(_Prunning), 且经过了一次sysmon循环并且G运行时间超过forcePreemptNS(10ms), 则抢占这个P
+				// 如果P在运行中(_Prunning), 且经过了一次sysmon循环并且G运行
+				// 时间超过forcePreemptNS(10ms), 则抢占这个P
 
 				// 对于 syscall 的情况，因为 M 没有与 P 绑定，
 				preemptone(pp)
