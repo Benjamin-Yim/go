@@ -956,7 +956,7 @@ func copystack(gp *g, newsize uintptr) {
 	if old.lo == 0 {
 		throw("nil stackbase")
 	}
-	// 栈大小
+	// 当前已使用的栈空间大小
 	used := old.hi - gp.sched.sp
 	// Add just the difference to gcController.addScannableStack.
 	// g0 stacks never move, so this will never account for them.
@@ -1001,10 +1001,16 @@ func copystack(gp *g, newsize uintptr) {
 		// carefully. (This shouldn't be far from the bottom
 		// of the stack, so there's little cost in handling
 		// everything below it carefully.)
+
+		// 到这里代表有被阻塞的 G 在当前 G 的channel 中，
+		// 所以要防止并发操作，需要获取 channel 的锁
+		// 在所有 sudog 中找到地址最大的指针
 		adjinfo.sghi = findsghi(gp, old)
 
 		// Synchronize with channel ops and copy the part of
 		// the stack they may interact with.
+		// 对所有 sudog 关联的 channel 上锁，然后调整指针，
+		// 并且复制 sudog 指向的部分旧栈的数据到新的栈上
 		ncopy -= syncadjustsudogs(gp, used, &adjinfo)
 	}
 
@@ -1143,7 +1149,12 @@ func newstack() {
 	// 保守的对用户态代码进行抢占，而非抢占运行时代码
 	// 如果正持有锁、分配内存或抢占被禁用，则不发生抢占
 	if preempt {
-		// 判断是否可以抢占
+		// 校验是否可以安全的被抢占
+		// 如果 M 上有锁
+		// 如果正在进行内存分配
+		// 如果明确禁止抢占
+		// 如果 P 的状态不是 running
+		// 那么就不执行抢占了
 		if !canPreemptM(thisg.m) {
 			// Let the goroutine keep running for now.
 			// gp->preempt is set, so it will be preempted next time.
@@ -1184,21 +1195,22 @@ func newstack() {
 		if thisg.m.p == 0 && thisg.m.locks == 0 {
 			throw("runtime: g is running but p is not")
 		}
-		// 判断是否由 GC 引起的
+		// 判断是否由 GC 引起的,收缩栈
 		if gp.preemptShrink {
 			// We're at a synchronous safe point now, so
 			// do the pending stack shrink.
 			gp.preemptShrink = false
 			shrinkstack(gp)
 		}
-
+		// 被 runtime.suspendG 函数挂起
 		if gp.preemptStop {
 			// 永不返回
+			// 被动让出当前处理器的控制权
 			preemptPark(gp) // never returns
 		}
 		// 如果不是GC引起的则调用gopreempt_m函数完成抢占.
 		// Act like goroutine called runtime.Gosched.
-		// 重新进入调度循环
+		// 重新进入调度循环.主动让出当前处理器的控制权
 		gopreempt_m(gp) // never return
 	}
 
@@ -1246,6 +1258,7 @@ func newstack() {
 	// The concurrent GC will not scan the stack while we are doing the copy since
 	// the gp is in a Gcopystack status.
 	// 因为 gp 处于 Gcopystack 状态，当我们对栈进行复制时并发 GC 不会扫描此栈
+	// 开始栈拷贝
 	copystack(gp, newsize)
 	if stackDebug >= 1 {
 		print("stack grow done\n")
