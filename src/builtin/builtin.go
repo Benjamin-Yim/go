@@ -80,6 +80,10 @@ type uint uint
 
 // uintptr is an integer type that is large enough to hold the bit pattern of
 // any pointer.
+//
+//		uintptr 是一个整数类型，它足够大，可以存储任何指针的值
+//	 uintptr 所指向的对象会被 gc 无情地回收。而 unsafe.Pointer 有指针语义，
+//	 可以保护它所指向的对象在“有用”的时候不会被垃圾回收。
 type uintptr uintptr
 
 // byte is an alias for uint8 and is equivalent to uint8 in all ways. It is

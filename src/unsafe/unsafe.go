@@ -10,6 +10,10 @@ Go 1 compatibility guidelines.
 */
 package unsafe
 
+// unsafe 包提供了 2 点重要的能力：
+//	1. 任何类型的指针和 unsafe.Pointer 可以相互转换。
+//	2. uintptr 类型和 unsafe.Pointer 可以相互转换。
+
 // ArbitraryType is here for the purposes of documentation only and is not actually
 // part of the unsafe package. It represents the type of an arbitrary Go expression.
 type ArbitraryType int
