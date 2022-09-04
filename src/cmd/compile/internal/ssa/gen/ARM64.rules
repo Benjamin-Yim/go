@@ -64,8 +64,11 @@
 (Sqrt32 ...) => (FSQRTS ...)
 
 // lowering rotates
+// we do rotate detection in generic rules, if the following rules need to be changed, chcek generic rules first.
 (RotateLeft8 <t> x (MOVDconst [c])) => (Or8 (Lsh8x64 <t> x (MOVDconst [c&7])) (Rsh8Ux64 <t> x (MOVDconst [-c&7])))
+(RotateLeft8 <t> x y) => (OR <t> (SLL <t> x (ANDconst <typ.Int64> [7] y)) (SRL <t> (ZeroExt8to64 x) (ANDconst <typ.Int64> [7] (NEG <typ.Int64> y))))
 (RotateLeft16 <t> x (MOVDconst [c])) => (Or16 (Lsh16x64 <t> x (MOVDconst [c&15])) (Rsh16Ux64 <t> x (MOVDconst [-c&15])))
+(RotateLeft16 <t> x y) => (RORW <t> (ORshiftLL <typ.UInt32> (ZeroExt16to32 x) (ZeroExt16to32 x) [16]) (NEG <typ.Int64> y))
 (RotateLeft32 x y) => (RORW x (NEG <y.Type> y))
 (RotateLeft64 x y) => (ROR x (NEG <y.Type> y))
 
@@ -1235,9 +1238,12 @@
 (EON x (MOVDconst [c])) => (XORconst [^c] x)
 (ORN x (MOVDconst [c])) => (ORconst  [^c] x)
 
-(SLL x (MOVDconst [c])) => (SLLconst x [c&63]) // Note: I don't think we ever generate bad constant shifts (i.e. c>=64)
+(SLL x (MOVDconst [c])) => (SLLconst x [c&63])
 (SRL x (MOVDconst [c])) => (SRLconst x [c&63])
 (SRA x (MOVDconst [c])) => (SRAconst x [c&63])
+(SLL x (ANDconst [63] y)) => (SLL x y)
+(SRL x (ANDconst [63] y)) => (SRL x y)
+(SRA x (ANDconst [63] y)) => (SRA x y)
 
 (CMP x (MOVDconst [c])) => (CMPconst [c] x)
 (CMP (MOVDconst [c]) x) => (InvertFlags (CMPconst [c] x))
@@ -1819,9 +1825,6 @@
 (ORNshiftRL (SRLconst x [c]) x [c]) => (MOVDconst [-1])
 (ORNshiftRA (SRAconst x [c]) x [c]) => (MOVDconst [-1])
 (ORNshiftRO (RORconst x [c]) x [c]) => (MOVDconst [-1])
-
-(RORconst [c] (RORconst [d] x)) => (RORconst [(c+d)&63] x)
-(RORWconst [c] (RORWconst [d] x)) => (RORWconst [(c+d)&31] x)
 
 // rev16w | rev16
 // ((x>>8) | (x<<8)) => (REV16W x), the type of x is uint16, "|" can also be "^" or "+".

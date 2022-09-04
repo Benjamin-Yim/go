@@ -59,8 +59,6 @@ func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max in
 	}
 	level, _, _ := gotraceback()
 
-	var ctxt *funcval // Context pointer for unstarted goroutines. See issue #25897.
-
 	if pc0 == ^uintptr(0) && sp0 == ^uintptr(0) { // Signal to fetch saved values from gp.
 		if gp.syscallsp != 0 { // 如果在 syscall 期间，那么就是 sysncallpc 和  syscallsp
 			pc0 = gp.syscallpc
@@ -74,8 +72,6 @@ func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max in
 			if usesLR {
 				lr0 = gp.sched.lr
 			}
-			// 上下文 ctxt, 目标方法指针
-			ctxt = (*funcval)(gp.sched.ctxt)
 		}
 	}
 
@@ -193,20 +189,22 @@ func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max in
 					// This keeps morestack() from showing up in the backtrace,
 					// but that makes some sense since it'll never be returned
 					// to.
-					frame.pc = gp.m.curg.sched.pc
+					gp = gp.m.curg
+					frame.pc = gp.sched.pc
 					frame.fn = findfunc(frame.pc)
 					f = frame.fn
 					flag = f.flag
-					frame.lr = gp.m.curg.sched.lr
-					frame.sp = gp.m.curg.sched.sp
-					stack = gp.m.curg.stack
-					cgoCtxt = gp.m.curg.cgoCtxt
+					frame.lr = gp.sched.lr
+					frame.sp = gp.sched.sp
+					stack = gp.stack
+					cgoCtxt = gp.cgoCtxt
 				case funcID_systemstack:
 					// systemstack returns normally, so just follow the
 					// stack transition.
-					frame.sp = gp.m.curg.sched.sp
-					stack = gp.m.curg.stack
-					cgoCtxt = gp.m.curg.cgoCtxt
+					gp = gp.m.curg
+					frame.sp = gp.sched.sp
+					stack = gp.stack
+					cgoCtxt = gp.cgoCtxt
 					flag &^= funcFlag_SPWRITE
 				}
 			}
@@ -309,21 +307,7 @@ func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max in
 			frame.varp -= goarch.PtrSize
 		}
 
-		// Derive size of arguments.
-		// Most functions have a fixed-size argument block,
-		// so we can use metadata about the function f.
-		// Not all, though: there are some variadic functions
-		// in package runtime and reflect, and for those we use call-specific
-		// metadata recorded by f's caller.
-		if callback != nil || printing {
-			frame.argp = frame.fp + sys.MinFrameSize
-			var ok bool
-			frame.arglen, frame.argmap, ok = getArgInfoFast(f, callback != nil)
-			if !ok {
-				frame.arglen, frame.argmap = getArgInfo(&frame, f, callback != nil, ctxt)
-			}
-		}
-		ctxt = nil // ctxt is only needed to get arg maps for the topmost frame
+		frame.argp = frame.fp + sys.MinFrameSize
 
 		// Determine frame's 'continuation PC', where it can continue.
 		// Normally this is the return address on the stack, but if sigpanic
@@ -516,7 +500,6 @@ func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max in
 		frame.lr = 0
 		frame.sp = frame.fp
 		frame.fp = 0
-		frame.argmap = nil
 
 		// On link register architectures, sighandler saves the LR on stack
 		// before faking a call.
@@ -685,74 +668,6 @@ printloop:
 		}
 		start = false
 	}
-}
-
-// reflectMethodValue is a partial duplicate of reflect.makeFuncImpl
-// and reflect.methodValue.
-type reflectMethodValue struct {
-	fn     uintptr
-	stack  *bitvector // ptrmap for both args and results
-	argLen uintptr    // just args
-}
-
-// getArgInfoFast returns the argument frame information for a call to f.
-// It is short and inlineable. However, it does not handle all functions.
-// If ok reports false, you must call getArgInfo instead.
-// TODO(josharian): once we do mid-stack inlining,
-// call getArgInfo directly from getArgInfoFast and stop returning an ok bool.
-func getArgInfoFast(f funcInfo, needArgMap bool) (arglen uintptr, argmap *bitvector, ok bool) {
-	return uintptr(f.args), nil, !(needArgMap && f.args == _ArgsSizeUnknown)
-}
-
-// getArgInfo returns the argument frame information for a call to f
-// with call frame frame.
-//
-// This is used for both actual calls with active stack frames and for
-// deferred calls or goroutines that are not yet executing. If this is an actual
-// call, ctxt must be nil (getArgInfo will retrieve what it needs from
-// the active stack frame). If this is a deferred call or unstarted goroutine,
-// ctxt must be the function object that was deferred or go'd.
-func getArgInfo(frame *stkframe, f funcInfo, needArgMap bool, ctxt *funcval) (arglen uintptr, argmap *bitvector) {
-	arglen = uintptr(f.args)
-	if needArgMap && f.args == _ArgsSizeUnknown {
-		// Extract argument bitmaps for reflect stubs from the calls they made to reflect.
-		switch funcname(f) {
-		case "reflect.makeFuncStub", "reflect.methodValueCall":
-			// These take a *reflect.methodValue as their
-			// context register.
-			var mv *reflectMethodValue
-			var retValid bool
-			if ctxt != nil {
-				// This is not an actual call, but a
-				// deferred call or an unstarted goroutine.
-				// The function value is itself the *reflect.methodValue.
-				mv = (*reflectMethodValue)(unsafe.Pointer(ctxt))
-			} else {
-				// This is a real call that took the
-				// *reflect.methodValue as its context
-				// register and immediately saved it
-				// to 0(SP). Get the methodValue from
-				// 0(SP).
-				arg0 := frame.sp + sys.MinFrameSize
-				mv = *(**reflectMethodValue)(unsafe.Pointer(arg0))
-				// Figure out whether the return values are valid.
-				// Reflect will update this value after it copies
-				// in the return values.
-				retValid = *(*bool)(unsafe.Pointer(arg0 + 4*goarch.PtrSize))
-			}
-			if mv.fn != f.entry() {
-				print("runtime: confused by ", funcname(f), "\n")
-				throw("reflect mismatch")
-			}
-			bv := mv.stack
-			arglen = uintptr(bv.n * goarch.PtrSize)
-			if !retValid {
-				arglen = uintptr(mv.argLen) &^ (goarch.PtrSize - 1)
-			}
-			argmap = bv
-		}
-	}
-	return
 }
 
 // tracebackCgoContext handles tracing back a cgo context value, from

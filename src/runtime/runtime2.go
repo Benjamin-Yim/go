@@ -793,17 +793,15 @@ type p struct {
 	timers []*timer
 
 	// Number of timers in P's heap.
-	// Modified using atomic instructions.
 	// P的堆中的定时器数量。
 	// 使用原子指令进行修改。
-	numTimers uint32
+	numTimers atomic.Uint32
 
 	// Number of timerDeleted timers in P's heap.
-	// Modified using atomic instructions.
 	//
 	// P的堆中TimerDeleted定时器的数量。
 	// 使用原子指令进行修改。
-	deletedTimers uint32
+	deletedTimers atomic.Uint32
 
 	// Race context used while executing timer functions.
 	// 执行计时器函数时使用的竞争上下文。
@@ -979,6 +977,28 @@ type _func struct {
 	flag      funcFlag
 	_         [1]byte // pad
 	nfuncdata uint8   // 必须是最后一个，必须在一个uint32对齐的边界上结束.must be last, must end on a uint32-aligned boundary
+
+	// The end of the struct is followed immediately by two variable-length
+	// arrays that reference the pcdata and funcdata locations for this
+	// function.
+
+	// pcdata contains the offset into moduledata.pctab for the start of
+	// that index's table. e.g.,
+	// &moduledata.pctab[_func.pcdata[_PCDATA_UnsafePoint]] is the start of
+	// the unsafe point table.
+	//
+	// An offset of 0 indicates that there is no table.
+	//
+	// pcdata [npcdata]uint32
+
+	// funcdata contains the offset past moduledata.gofunc which contains a
+	// pointer to that index's funcdata. e.g.,
+	// *(moduledata.gofunc +  _func.funcdata[_FUNCDATA_ArgsPointerMaps]) is
+	// the argument pointer map.
+	//
+	// An offset of ^uint32(0) indicates that there is no entry.
+	//
+	// funcdata [nfuncdata]uint32
 }
 
 // Pseudo-Func that is returned for PCs that occur in inlined code.
@@ -1089,20 +1109,6 @@ type _panic struct {
 	recovered bool           // whether this panic is over
 	aborted   bool           // the panic was aborted
 	goexit    bool
-}
-
-// stack traces
-type stkframe struct {
-	fn       funcInfo   // 将要运行的方法。function being run
-	pc       uintptr    // fn 的程序计数器。program counter within fn
-	continpc uintptr    // 可以继续执行的程序计数器，否则为 0. program counter where execution can continue, or 0 if not
-	lr       uintptr    // 调用者的程序计数器又名链接寄存器. program counter at caller aka link register
-	sp       uintptr    // 栈指针。stack pointer at pc
-	fp       uintptr    // 帧指针。stack pointer at caller aka frame pointer
-	varp     uintptr    // 局部变量的顶部。top of local variables
-	argp     uintptr    // 方法参数的指针。pointer to function arguments
-	arglen   uintptr    // 参数长度字符数组。number of bytes at argp
-	argmap   *bitvector // 强制使用这个 argmap。force use of this argmap
 }
 
 // ancestorInfo records details of where a goroutine was started.
