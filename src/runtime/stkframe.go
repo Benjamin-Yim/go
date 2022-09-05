@@ -15,7 +15,7 @@ import (
 type stkframe struct {
 	// fn is the function being run in this frame. If there is
 	// inlining, this is the outermost function.
-	fn funcInfo
+	fn funcInfo // 将要运行的方法
 
 	// pc is the program counter within fn.
 	//
@@ -41,7 +41,7 @@ type stkframe struct {
 	//   instruction in a function. Conventionally, we use pc-1
 	//   for symbolic information, unless pc == fn.entry(), in
 	//   which case we use pc.
-	pc uintptr
+	pc uintptr // fn 的程序计数器。
 
 	// continpc is the PC where execution will continue in fn, or
 	// 0 if execution will not continue in this frame.
@@ -51,13 +51,13 @@ type stkframe struct {
 	// deferreturn or 0 if this frame will never execute again.
 	//
 	// This is the PC to use to look up GC liveness for this frame.
-	continpc uintptr
+	continpc uintptr // 可以继续执行的程序计数器，否则为 0.
 
-	lr   uintptr // program counter at caller aka link register
-	sp   uintptr // stack pointer at pc
-	fp   uintptr // stack pointer at caller aka frame pointer
-	varp uintptr // top of local variables
-	argp uintptr // pointer to function arguments
+	lr   uintptr // 调用者的程序计数器又名链接寄存器.program counter at caller aka link register
+	sp   uintptr // stack 栈指针。 stack pointer at pc
+	fp   uintptr // stack 帧指针。 stack pointer at caller aka frame pointer
+	varp uintptr // 局部变量的顶部。 top of local variables
+	argp uintptr // 参数长度字符数组。 pointer to function arguments
 }
 
 // reflectMethodValue is a partial duplicate of reflect.makeFuncImpl
@@ -152,6 +152,8 @@ func (frame *stkframe) argMapInternal() (argMap bitvector, hasReflectStackObj bo
 	return
 }
 
+// getStackMap 返回本地变量和参数的实时指针图，以及框架的堆栈对象列表。
+//
 // getStackMap returns the locals and arguments live pointer maps, and
 // stack object list for frame.
 func (frame *stkframe) getStackMap(cache *pcvalueCache, debug bool) (locals, args bitvector, objs []stackObjectRecord) {
@@ -168,6 +170,8 @@ func (frame *stkframe) getStackMap(cache *pcvalueCache, debug bool) (locals, arg
 		// point, we want to use the entry map (-1), even if
 		// the first instruction of the function changes the
 		// stack map.
+		// 返回到CALL。如果我们处于函数入口点，我们要使用入口 map（-1），
+		// 即使函数的第一条指令改变了堆栈map。
 		targetpc--
 		pcdata = pcdatavalue(f, _PCDATA_StackMapIndex, targetpc, cache)
 	}
@@ -188,7 +192,9 @@ func (frame *stkframe) getStackMap(cache *pcvalueCache, debug bool) (locals, arg
 		minsize = sys.MinFrameSize
 	}
 	if size > minsize {
+		// 说明有本地变量有在栈中的
 		stackid := pcdata
+		// 因为栈空间不属于arena区域, 栈空间的指针信息将会在函数信息里面.
 		stkmap := (*stackmap)(funcdata(f, _FUNCDATA_LocalsPointerMaps))
 		if stkmap == nil || stkmap.n <= 0 {
 			print("runtime: frame ", funcname(f), " untyped locals ", hex(frame.varp-size), "+", hex(size), "\n")
@@ -234,6 +240,7 @@ func (frame *stkframe) getStackMap(cache *pcvalueCache, debug bool) (locals, arg
 	}
 
 	// stack objects.
+	// 栈对象处理
 	if (GOARCH == "amd64" || GOARCH == "arm64" || GOARCH == "ppc64" || GOARCH == "ppc64le" || GOARCH == "riscv64") &&
 		unsafe.Sizeof(abi.RegArgs{}) > 0 && isReflect {
 		// For reflect.makeFuncStub and reflect.methodValueCall,
