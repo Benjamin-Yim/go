@@ -923,7 +923,11 @@ func parseRange(s string, size int64) ([]httpRange, error) {
 			if err != nil || i < 0 {
 				return nil, errors.New("invalid range")
 			}
-			if i >= size {
+			//   For byte ranges, failing to overlap the current extent means that the
+			//   first-byte-pos of all of the byte-range-spec values were greater than
+			//   the current length of the selected representation.
+			//   like:[https://datatracker.ietf.org/doc/html/rfc7233#section-4.4]
+			if i > size {
 				// If the range begins after the size of the content,
 				// then it does not overlap.
 				noOverlap = true
@@ -937,6 +941,10 @@ func parseRange(s string, size int64) ([]httpRange, error) {
 				i, err := strconv.ParseInt(end, 10, 64)
 				if err != nil || r.start > i {
 					return nil, errors.New("invalid range")
+				}
+				if size == 0 {
+					r.length = 0
+					continue
 				}
 				if i >= size {
 					i = size - 1
