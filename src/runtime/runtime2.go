@@ -468,8 +468,8 @@ type g struct {
 	// 3. By debugCallWrap to pass parameters to a new goroutine because allocating a
 	//    closure in the runtime is forbidden.
 	param        unsafe.Pointer // wakeup唤醒时传递的参数
-	atomicstatus uint32         //  g的当前状态,状态 Gidle,Grunnable,Grunning,Gsyscall,Gwaiting,Gdead
-	stackLock    uint32         // sigprof/scang lock; TODO: fold in to atomicstatus
+	atomicstatus atomic.Uint32 //  g的当前状态,状态 Gidle,Grunnable,Grunning,Gsyscall,Gwaiting,Gdead
+	stackLock    uint32 // sigprof/scang lock; TODO: fold in to atomicstatus
 	goid         uint64
 	schedlink    guintptr   // 指向全局运行队列中的下一个g，所有位于全局运行队列中的g形成一个链表
 	waitsince    int64      // 阻塞时长.  approx time when the g become blocked
