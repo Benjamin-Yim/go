@@ -962,8 +962,8 @@ const (
 // Keep in sync with linker (../cmd/link/internal/ld/pcln.go:/pclntab)
 // and with package debug/gosym and with symtab.go in package runtime.
 type _func struct {
-	entryoff uint32 // 入口，PC 开始的地址。start pc, as offset from moduledata.text/pcHeader.textStart
-	nameoff  int32  // 方法名称。function name
+	entryOff uint32 // 入口，PC 开始的地址。start pc, as offset from moduledata.text/pcHeader.textStart
+	nameOff  int32  // 方法名称。function name, as index into moduledata.funcnametab.
 
 	args        int32  // 进出参数大小。in/out args size
 	deferreturn uint32 // offset of start of a deferreturn call instruction from entry, if any.
