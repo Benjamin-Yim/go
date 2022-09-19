@@ -304,7 +304,9 @@ func (v *hairyVisitor) doNode(n ir.Node) bool {
 						case "littleEndian.Uint64", "littleEndian.Uint32", "littleEndian.Uint16",
 							"bigEndian.Uint64", "bigEndian.Uint32", "bigEndian.Uint16",
 							"littleEndian.PutUint64", "littleEndian.PutUint32", "littleEndian.PutUint16",
-							"bigEndian.PutUint64", "bigEndian.PutUint32", "bigEndian.PutUint16":
+							"bigEndian.PutUint64", "bigEndian.PutUint32", "bigEndian.PutUint16",
+							"littleEndian.AppendUint64", "littleEndian.AppendUint32", "littleEndian.AppendUint16",
+							"bigEndian.AppendUint64", "bigEndian.AppendUint32", "bigEndian.AppendUint16":
 							cheap = true
 						}
 					}
@@ -378,6 +380,15 @@ func (v *hairyVisitor) doNode(n ir.Node) bool {
 
 	case ir.OAPPEND:
 		v.budget -= inlineExtraAppendCost
+
+	case ir.OADDR:
+		n := n.(*ir.AddrExpr)
+		// Make "&s.f" cost 0 when f's offset is zero.
+		if dot, ok := n.X.(*ir.SelectorExpr); ok && (dot.Op() == ir.ODOT || dot.Op() == ir.ODOTPTR) {
+			if _, ok := dot.X.(*ir.Name); ok && dot.Selection.Offset == 0 {
+				v.budget += 2 // undo ir.OADDR+ir.ODOT/ir.ODOTPTR
+			}
+		}
 
 	case ir.ODEREF:
 		// *(*X)(unsafe.Pointer(&x)) is low-cost
