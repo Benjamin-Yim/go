@@ -80,7 +80,7 @@ type mheap struct {
 	// store. Accesses during STW might not hold the lock, but
 	// must ensure that allocation cannot happen around the
 	// access (since that may free the backing store).
-	allspans []*mspan // all spans out there
+	allspans []*mspan // 指向mspans区域，用于映射mspan和page的关系. all spans out there
 
 	// Proportional sweep
 	//
@@ -379,14 +379,14 @@ type mSpanList struct {
 
 type mspan struct {
 	_    sys.NotInHeap
-	next *mspan     // next span in list, or nil if none
-	prev *mspan     // previous span in list, or nil if none
+	next *mspan     // 双向链表中 指向下一个。next span in list, or nil if none
+	prev *mspan     // 双向链表中 指向前一个。previous span in list, or nil if none
 	list *mSpanList // For debugging. TODO: Remove.
 
-	startAddr uintptr // address of first byte of span aka s.base()
-	npages    uintptr // number of pages in span
+	startAddr uintptr // 起始序号。address of first byte of span aka s.base()
+	npages    uintptr // 管理的页数。number of pages in span
 
-	manualFreeList gclinkptr // list of free objects in mSpanManual spans
+	manualFreeList gclinkptr // 待分配的 object 链表。list of free objects in mSpanManual spans
 
 	// freeindex is the slot index between 0 and nelems at which to begin scanning
 	// for the next free object in this span.
@@ -406,7 +406,7 @@ type mspan struct {
 	freeindex uintptr
 	// TODO: Look up nelems from sizeclass and remove this field if it
 	// helps performance.
-	nelems uintptr // number of object in the span.
+	nelems uintptr //  span 中对象的数量。number of object in the span.
 
 	// Cache of the allocBits at freeindex. allocCache is shifted
 	// such that the lowest bit corresponds to the bit freeindex.
@@ -414,7 +414,7 @@ type mspan struct {
 	// ctz (count trailing zero) to use it directly.
 	// allocCache may contain bits beyond s.nelems; the caller must ignore
 	// these.
-	allocCache uint64
+	allocCache uint64 // 已分配块的个数
 
 	// allocBits and gcmarkBits hold pointers to a span's mark and
 	// allocation bits. The pointers are 8 byte aligned.

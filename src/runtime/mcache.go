@@ -42,7 +42,7 @@ type mcache struct {
 
 	// The rest is not accessed on every malloc.
 
-	alloc [numSpanClasses]*mspan // spans to allocate from, indexed by spanClass
+	alloc [numSpanClasses]*mspan // 以numSpanClasses 为索引管理多个用于分配的 span.spans to allocate from, indexed by spanClass
 
 	stackcache [_NumStackOrders]stackfreelist
 
