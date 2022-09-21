@@ -216,7 +216,7 @@ type heapArena struct {
 	// bitmap stores the pointer/scalar bitmap for the words in
 	// this arena. See mbitmap.go for a description.
 	// This array uses 1 bit per word of heap, or 1.6% of the heap size (for 64-bit).
-	bitmap [heapArenaBitmapWords]uintptr
+	bitmap [heapArenaBitmapWords]uintptr //即是内存中bitmap对应
 
 	// If the ith bit of noMorePtrs is true, then there are no more
 	// pointers for the object containing the word described by the
@@ -403,10 +403,10 @@ type mspan struct {
 	// undefined and should never be referenced.
 	//
 	// Object n starts at address n*elemsize + (start << pageShift).
-	freeindex uintptr
+	freeindex uintptr // 表示分配到第几个块
 	// TODO: Look up nelems from sizeclass and remove this field if it
 	// helps performance.
-	nelems uintptr //  span 中对象的数量。number of object in the span.
+	nelems uintptr //  span 中对象的数量,表示有多少个可供分配。number of object in the span.
 
 	// Cache of the allocBits at freeindex. allocCache is shifted
 	// such that the lowest bit corresponds to the bit freeindex.
@@ -438,7 +438,7 @@ type mspan struct {
 	// The sweep will free the old allocBits and set allocBits to the
 	// gcmarkBits. The gcmarkBits are replaced with a fresh zeroed
 	// out memory.
-	allocBits  *gcBits
+	allocBits  *gcBits //分配位图，每一位代表一个块是否已分配
 	gcmarkBits *gcBits
 
 	// sweep generation:
@@ -452,11 +452,11 @@ type mspan struct {
 	sweepgen              uint32
 	divMul                uint32        // for divide by elemsize
 	allocCount            uint16        // number of allocated objects
-	spanclass             spanClass     // size class and noscan (uint8)
+	spanclass             spanClass     // class表中的class ID，和Size Classs相关 size class and noscan (uint8)
 	state                 mSpanStateBox // mSpanInUse etc; accessed atomically (get/set methods)
-	needzero              uint8         // needs to be zeroed before allocation
+	needzero              uint8         // 需要needs to be zeroed before allocation
 	allocCountBeforeCache uint16        // a copy of allocCount that is stored just before this span is cached
-	elemsize              uintptr       // computed from sizeclass or from npages
+	elemsize              uintptr       // class表中的对象大小，也即块大小 computed from sizeclass or from npages
 	limit                 uintptr       // end of data in span
 	speciallock           mutex         // guards specials list
 	specials              *special      // linked list of special records sorted by offset.

@@ -20,7 +20,7 @@ import (
 // Central list of free objects of a given size.
 type mcentral struct {
 	_         sys.NotInHeap
-	spanclass spanClass
+	spanclass spanClass // 规格
 
 	// partial and full contain two mspan sets: one of swept in-use
 	// spans, and one of unswept in-use spans. These two trade
