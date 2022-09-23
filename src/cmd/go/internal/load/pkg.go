@@ -873,8 +873,11 @@ func loadPackageData(ctx context.Context, path, parentPath, parentDir, parentRoo
 		var data packageData
 		if r.dir != "" {
 			var buildMode build.ImportMode
+			buildContext := cfg.BuildContext
 			if !cfg.ModulesEnabled {
 				buildMode = build.ImportComment
+			} else {
+				buildContext.GOPATH = "" // Clear GOPATH so packages are imported as pure module packages
 			}
 			modroot := modload.PackageModRoot(ctx, r.path)
 			if modroot == "" && str.HasPathPrefix(r.dir, cfg.GOROOTsrc) {
@@ -891,7 +894,7 @@ func loadPackageData(ctx context.Context, path, parentPath, parentDir, parentRoo
 					base.Fatalf("go: %v", err)
 				}
 			}
-			data.p, data.err = cfg.BuildContext.ImportDir(r.dir, buildMode)
+			data.p, data.err = buildContext.ImportDir(r.dir, buildMode)
 		Happy:
 			if cfg.ModulesEnabled {
 				// Override data.p.Root, since ImportDir sets it to $GOPATH, if
@@ -2438,6 +2441,12 @@ func (p *Package) setBuildInfo(autoVCS bool) {
 	}
 
 	if wantVCS && p.Module != nil && p.Module.Version == "" && !p.Standard {
+		if p.Module.Path == "bootstrap" && cfg.GOROOT == os.Getenv("GOROOT_BOOTSTRAP") {
+			// During bootstrapping, the bootstrap toolchain is built in module
+			// "bootstrap" (instead of "std"), with GOROOT set to GOROOT_BOOTSTRAP
+			// (so the bootstrap toolchain packages don't even appear to be in GOROOT).
+			goto omitVCS
+		}
 		repoDir, vcsCmd, err = vcs.FromDir(base.Cwd(), "", allowNesting)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			setVCSError(err)
