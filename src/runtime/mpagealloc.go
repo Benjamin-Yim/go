@@ -106,7 +106,7 @@ func chunkIndex(p uintptr) chunkIdx {
 	return chunkIdx((p - arenaBaseOffset) / pallocChunkBytes)
 }
 
-// chunkIndex returns the base address of the palloc chunk at index ci.
+// chunkBase returns the base address of the palloc chunk at index ci.
 func chunkBase(ci chunkIdx) uintptr {
 	return uintptr(ci)*pallocChunkBytes + arenaBaseOffset
 }
@@ -279,7 +279,7 @@ type pageAlloc struct {
 	}
 
 	// mheap_.lock. This level of indirection makes it possible
-	// to test pageAlloc indepedently of the runtime allocator.
+	// to test pageAlloc independently of the runtime allocator.
 	mheapLock *mutex
 
 	// sysStat is the runtime memstat to update when new system

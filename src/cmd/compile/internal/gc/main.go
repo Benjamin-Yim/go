@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"bytes"
 	"cmd/compile/internal/base"
+	"cmd/compile/internal/coverage"
 	"cmd/compile/internal/deadcode"
 	"cmd/compile/internal/devirtualize"
 	"cmd/compile/internal/dwarfgen"
@@ -16,10 +17,12 @@ import (
 	"cmd/compile/internal/ir"
 	"cmd/compile/internal/logopt"
 	"cmd/compile/internal/noder"
+	"cmd/compile/internal/pgo"
 	"cmd/compile/internal/pkginit"
 	"cmd/compile/internal/reflectdata"
 	"cmd/compile/internal/ssa"
 	"cmd/compile/internal/ssagen"
+	"cmd/compile/internal/staticinit"
 	"cmd/compile/internal/typecheck"
 	"cmd/compile/internal/types"
 	"cmd/internal/dwarf"
@@ -73,6 +76,12 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 	base.DebugSSA = ssa.PhaseOption
 	base.ParseFlags()
 
+	if os.Getenv("GOGC") == "" { // GOGC set disables starting heap adjustment
+		// More processors will use more heap, but assume that more memory is available.
+		// So 1 processor -> 40MB, 4 -> 64MB, 12 -> 128MB
+		base.AdjustStartingHeap(uint64(32+8*base.Flag.LowerC) << 20)
+	}
+
 	types.LocalPkg = types.NewPkg(base.Ctxt.Pkgpath, "")
 
 	// pseudo-package, for scoping
@@ -96,6 +105,10 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 
 	// pseudo-package used for methods with anonymous receivers
 	ir.Pkgs.Go = types.NewPkg("go", "")
+
+	// pseudo-package for use with code coverage instrumentation.
+	ir.Pkgs.Coverage = types.NewPkg("go.coverage", "runtime/coverage")
+	ir.Pkgs.Coverage.Prefix = "runtime/coverage"
 
 	// Record flags that affect the build result. (And don't
 	// record flags that don't, since that would cause spurious
@@ -198,6 +211,12 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 	// because it generates itabs for initializing global variables.
 	ssagen.InitConfig()
 
+	// First part of coverage fixup (if applicable).
+	var cnames coverage.Names
+	if base.Flag.Cfg.CoverageInfo != nil {
+		cnames = coverage.FixupVars()
+	}
+
 	// Create "init" function for package-scope variable initialization
 	// statements, if any.
 	//
@@ -206,6 +225,12 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 	// carried out in, and even mundane optimizations like dead code
 	// removal can skew the results (e.g., #43444).
 	pkginit.MakeInit()
+
+	// Second part of code coverage fixup (init func modification),
+	// if applicable.
+	if base.Flag.Cfg.CoverageInfo != nil {
+		coverage.FixupInit(cnames)
+	}
 
 	// Eliminate some obviously dead code.
 	// Must happen after typechecking.
@@ -226,16 +251,17 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 	}
 	typecheck.IncrementalAddrtaken = true
 
-	if base.Debug.TypecheckInl != 0 {
-		// Typecheck imported function bodies if Debug.l > 1,
-		// otherwise lazily when used or re-exported.
-		typecheck.AllImportedBodies()
+	// Read profile file and build profile-graph and weighted-call-graph.
+	base.Timer.Start("fe", "pgoprofile")
+	var profile *pgo.Profile
+	if base.Flag.PgoProfile != "" {
+		profile = pgo.New(base.Flag.PgoProfile)
 	}
 
 	// Inlining
 	base.Timer.Start("fe", "inlining")
 	if base.Flag.LowerL != 0 {
-		inline.InlinePackage()
+		inline.InlinePackage(profile)
 	}
 	noder.MakeWrappers(typecheck.Target) // must happen after inlining
 
@@ -266,11 +292,6 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 	// because large values may contain pointers, it must happen early.
 	base.Timer.Start("fe", "escapes")
 	escape.Funcs(typecheck.Target.Decls)
-
-	// TODO(mdempsky): This is a hack. We need a proper, global work
-	// queue for scheduling function compilation so components don't
-	// need to adjust their behavior depending on when they're called.
-	reflectdata.AfterGlobalEscapeAnalysis = true
 
 	// Collect information for go:nowritebarrierrec
 	// checking. This must happen before transforming closures during Walk
@@ -303,6 +324,11 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 	if base.Flag.CompilingRuntime {
 		// Write barriers are now known. Check the call graph.
 		ssagen.NoWriteBarrierRecCheck()
+	}
+
+	// Add keep relocations for global maps.
+	if base.Flag.WrapGlobalMapInit {
+		staticinit.AddKeepRelocations()
 	}
 
 	// Finalize DWARF inline routine DIEs, then explicitly turn off

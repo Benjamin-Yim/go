@@ -178,7 +178,7 @@ func (p *Parser) asmText(operands [][]lex.Token) {
 		}
 		argSize = p.positiveAtoi(op[1].String())
 	}
-	p.ctxt.InitTextSym(nameAddr.Sym, int(flag))
+	p.ctxt.InitTextSym(nameAddr.Sym, int(flag), p.pos())
 	prog := &obj.Prog{
 		Ctxt: p.ctxt,
 		As:   obj.ATEXT,
@@ -297,7 +297,7 @@ func (p *Parser) asmGlobl(operands [][]lex.Token) {
 	}
 
 	// log.Printf("GLOBL %s %d, $%d", name, flag, size)
-	p.ctxt.Globl(nameAddr.Sym, addr.Offset, int(flag))
+	p.ctxt.GloblPos(nameAddr.Sym, addr.Offset, int(flag), p.pos())
 }
 
 // asmPCData assembles a PCDATA pseudo-op.
@@ -642,6 +642,18 @@ func (p *Parser) asmInstruction(op obj.As, cond string, a []obj.Addr) {
 				prog.Reg = p.getRegister(prog, op, &a[1])
 				break
 			}
+
+			if arch.IsLoong64RDTIME(op) {
+				// The Loong64 RDTIME family of instructions is a bit special,
+				// in that both its register operands are outputs
+				prog.To = a[0]
+				if a[1].Type != obj.TYPE_REG {
+					p.errorf("invalid addressing modes for 2nd operand to %s instruction, must be register", op)
+					return
+				}
+				prog.RegTo2 = a[1].Reg
+				break
+			}
 		}
 		prog.From = a[0]
 		prog.To = a[1]
@@ -895,13 +907,6 @@ func (p *Parser) asmInstruction(op obj.As, cond string, a []obj.Addr) {
 	}
 
 	p.append(prog, cond, true)
-}
-
-// newAddr returns a new(Addr) initialized to x.
-func newAddr(x obj.Addr) *obj.Addr {
-	p := new(obj.Addr)
-	*p = x
-	return p
 }
 
 // symbolName returns the symbol name, or an error string if none if available.

@@ -1090,7 +1090,7 @@ func (x *expandState) rewriteArgs(v *Value, firstArg int) {
 	if v.Op == OpTailLECall {
 		// For tail call, we unwind the frame before the call so we'll use the caller's
 		// SP.
-		sp = x.f.Entry.NewValue0(src.NoXPos, OpGetCallerSP, x.typs.Uintptr)
+		sp = x.f.Entry.NewValue1(src.NoXPos, OpGetCallerSP, x.typs.Uintptr, mem)
 	}
 	for i, a := range v.Args[firstArg : len(v.Args)-1] { // skip leading non-parameter SSA Args and trailing mem SSA Arg.
 		oldArgs = append(oldArgs, a)
@@ -1786,7 +1786,7 @@ func (x *expandState) newArgToMemOrRegs(baseArg, toReplace *Value, offset int64,
 
 }
 
-// argOpAndRegisterFor converts an abi register index into an ssa Op and corresponding
+// ArgOpAndRegisterFor converts an abi register index into an ssa Op and corresponding
 // arg register index.
 func ArgOpAndRegisterFor(r abi.RegIndex, abiConfig *abi.ABIConfig) (Op, int64) {
 	i := abiConfig.FloatIndexFor(r)

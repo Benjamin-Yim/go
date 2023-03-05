@@ -31,6 +31,7 @@ import (
 	"go/ast"
 	"go/constant"
 	"go/token"
+	. "internal/types/errors"
 )
 
 // An Error describes a type-checking error; it implements the error interface.
@@ -48,7 +49,7 @@ type Error struct {
 	// to preview this feature may read go116code using reflection (see
 	// errorcodes_test.go), but beware that there is no guarantee of future
 	// compatibility.
-	go116code  errorCode
+	go116code  Code
 	go116start token.Pos
 	go116end   token.Pos
 }
@@ -141,6 +142,9 @@ type Config struct {
 	//
 	// It is an error to set both FakeImportC and go115UsesCgo.
 	go115UsesCgo bool
+
+	// If _Trace is set, a debug trace is printed to stdout.
+	_Trace bool
 
 	// If Error != nil, it is called with each error found
 	// during type checking; err has dynamic type Error.
@@ -424,7 +428,7 @@ func AssertableTo(V *Interface, T Type) bool {
 	if T.Underlying() == Typ[Invalid] {
 		return false
 	}
-	return (*Checker)(nil).newAssertableTo(V, T)
+	return (*Checker)(nil).newAssertableTo(V, T, nil)
 }
 
 // AssignableTo reports whether a value of type V is assignable to a variable
@@ -462,17 +466,28 @@ func Implements(V Type, T *Interface) bool {
 	if V.Underlying() == Typ[Invalid] {
 		return false
 	}
-	return (*Checker)(nil).implements(V, T, nil)
+	return (*Checker)(nil).implements(V, T, false, nil)
+}
+
+// Satisfies reports whether type V satisfies the constraint T.
+//
+// The behavior of Satisfies is unspecified if V is Typ[Invalid] or an uninstantiated
+// generic type.
+func Satisfies(V Type, T *Interface) bool {
+	return (*Checker)(nil).implements(V, T, true, nil)
 }
 
 // Identical reports whether x and y are identical types.
 // Receivers of Signature types are ignored.
 func Identical(x, y Type) bool {
-	return identical(x, y, true, nil)
+	var c comparer
+	return c.identical(x, y, nil)
 }
 
 // IdenticalIgnoreTags reports whether x and y are identical types if tags are ignored.
 // Receivers of Signature types are ignored.
 func IdenticalIgnoreTags(x, y Type) bool {
-	return identical(x, y, false, nil)
+	var c comparer
+	c.ignoreTags = true
+	return c.identical(x, y, nil)
 }

@@ -38,6 +38,8 @@ type FuncDebug struct {
 	// Register-resident output parameters for the function. This is filled in at
 	// SSA generation time.
 	RegOutputParams []*ir.Name
+	// Variable declarations that were removed during optimization
+	OptDcl []*ir.Name
 
 	// Filled in by the user. Translates Block and Value ID to PC.
 	GetPC func(ID, ID) int64
@@ -801,7 +803,7 @@ func (state *debugState) liveness() []*BlockDebug {
 // the first call, subsequent calls can only shrink startState.
 //
 // Passing forLocationLists=true enables additional side-effects that
-// are necessary for building location lists but superflous while still
+// are necessary for building location lists but superfluous while still
 // iterating to an answer.
 //
 // If previousBlock is non-nil, it registers changes vs. that block's

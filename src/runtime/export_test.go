@@ -69,6 +69,9 @@ func LFStackPush(head *uint64, node *LFNode) {
 func LFStackPop(head *uint64) *LFNode {
 	return (*LFNode)(unsafe.Pointer((*lfstack)(head).pop()))
 }
+func LFNodeValidate(node *LFNode) {
+	lfnodeValidate((*lfnode)(unsafe.Pointer(node)))
+}
 
 func Netpoll(delta int64) {
 	systemstack(func() {
@@ -362,6 +365,9 @@ func ReadMemStatsSlow() (base, slow MemStats) {
 			if s.state.get() != mSpanInUse {
 				continue
 			}
+			if s.isUnusedUserArenaChunk() {
+				continue
+			}
 			if sizeclass := s.spanclass.sizeclass(); sizeclass == 0 {
 				slow.Mallocs++
 				slow.Alloc += uint64(s.elemsize)
@@ -500,7 +506,10 @@ func KeepNArenaHints(n int) {
 // MapNextArenaHint reserves a page at the next arena growth hint,
 // preventing the arena from growing there, and returns the range of
 // addresses that are no longer viable.
-func MapNextArenaHint() (start, end uintptr) {
+//
+// This may fail to reserve memory. If it fails, it still returns the
+// address range it attempted to reserve.
+func MapNextArenaHint() (start, end uintptr, ok bool) {
 	hint := mheap_.arenaHints
 	addr := hint.addr
 	if hint.down {
@@ -509,7 +518,13 @@ func MapNextArenaHint() (start, end uintptr) {
 	} else {
 		start, end = addr, addr+heapArenaBytes
 	}
-	sysReserve(unsafe.Pointer(addr), physPageSize)
+	got := sysReserve(unsafe.Pointer(addr), physPageSize)
+	ok = (addr == uintptr(got))
+	if !ok {
+		// We were unable to get the requested reservation.
+		// Release what we did get and fail.
+		sysFreeOS(got, physPageSize)
+	}
 	return
 }
 
@@ -523,6 +538,10 @@ type Sudog = sudog
 
 func Getg() *G {
 	return getg()
+}
+
+func Goid() uint64 {
+	return getg().goid
 }
 
 func GIsWaitingOnMutex(gp *G) bool {
@@ -1625,3 +1644,81 @@ func (s *ScavengeIndex) Clear(ci ChunkIdx) {
 }
 
 const GTrackingPeriod = gTrackingPeriod
+
+var ZeroBase = unsafe.Pointer(&zerobase)
+
+const UserArenaChunkBytes = userArenaChunkBytes
+
+type UserArena struct {
+	arena *userArena
+}
+
+func NewUserArena() *UserArena {
+	return &UserArena{newUserArena()}
+}
+
+func (a *UserArena) New(out *any) {
+	i := efaceOf(out)
+	typ := i._type
+	if typ.kind&kindMask != kindPtr {
+		panic("new result of non-ptr type")
+	}
+	typ = (*ptrtype)(unsafe.Pointer(typ)).elem
+	i.data = a.arena.new(typ)
+}
+
+func (a *UserArena) Slice(sl any, cap int) {
+	a.arena.slice(sl, cap)
+}
+
+func (a *UserArena) Free() {
+	a.arena.free()
+}
+
+func GlobalWaitingArenaChunks() int {
+	n := 0
+	systemstack(func() {
+		lock(&mheap_.lock)
+		for s := mheap_.userArena.quarantineList.first; s != nil; s = s.next {
+			n++
+		}
+		unlock(&mheap_.lock)
+	})
+	return n
+}
+
+func UserArenaClone[T any](s T) T {
+	return arena_heapify(s).(T)
+}
+
+var AlignUp = alignUp
+
+// BlockUntilEmptyFinalizerQueue blocks until either the finalizer
+// queue is emptied (and the finalizers have executed) or the timeout
+// is reached. Returns true if the finalizer queue was emptied.
+func BlockUntilEmptyFinalizerQueue(timeout int64) bool {
+	start := nanotime()
+	for nanotime()-start < timeout {
+		lock(&finlock)
+		// We know the queue has been drained when both finq is nil
+		// and the finalizer g has stopped executing.
+		empty := finq == nil
+		empty = empty && readgstatus(fing) == _Gwaiting && fing.waitreason == waitReasonFinalizerWait
+		unlock(&finlock)
+		if empty {
+			return true
+		}
+		Gosched()
+	}
+	return false
+}
+
+func FrameStartLine(f *Frame) int {
+	return f.startLine
+}
+
+// PersistentAlloc allocates some memory that lives outside the Go heap.
+// This memory will never be freed; use sparingly.
+func PersistentAlloc(n uintptr) unsafe.Pointer {
+	return persistentalloc(n, 0, &memstats.other_sys)
+}

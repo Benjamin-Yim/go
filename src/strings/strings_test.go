@@ -54,6 +54,11 @@ var indexTests = []IndexTest{
 	{"foo", "", 0},
 	{"foo", "o", 1},
 	{"abcABCabc", "A", 3},
+	{"jrzm6jjhorimglljrea4w3rlgosts0w2gia17hno2td4qd1jz", "jz", 47},
+	{"ekkuk5oft4eq0ocpacknhwouic1uua46unx12l37nioq9wbpnocqks6", "ks6", 52},
+	{"999f2xmimunbuyew5vrkla9cpwhmxan8o98ec", "98ec", 33},
+	{"9lpt9r98i04k8bz6c6dsrthb96bhi", "96bhi", 24},
+	{"55u558eqfaod2r2gu42xxsu631xf0zobs5840vl", "5840vl", 33},
 	// cases with one byte strings - test special case in Index()
 	{"", "a", -1},
 	{"x", "a", -1},
@@ -1105,6 +1110,8 @@ func TestCaseConsistency(t *testing.T) {
 	*/
 }
 
+var longString = "a" + string(make([]byte, 1<<16)) + "z"
+
 var RepeatTests = []struct {
 	in, out string
 	count   int
@@ -1116,6 +1123,9 @@ var RepeatTests = []struct {
 	{"-", "-", 1},
 	{"-", "----------", 10},
 	{"abc ", "abc abc abc ", 3},
+	// Tests for results over the chunkLimit
+	{string(rune(0)), string(make([]byte, 1<<16)), 1 << 16},
+	{longString, longString + longString, 2},
 }
 
 func TestRepeat(t *testing.T) {
@@ -1525,6 +1535,17 @@ func TestContainsRune(t *testing.T) {
 	}
 }
 
+func TestContainsFunc(t *testing.T) {
+	for _, ct := range ContainsRuneTests {
+		if ContainsFunc(ct.str, func(r rune) bool {
+			return ct.r == r
+		}) != ct.expected {
+			t.Errorf("ContainsFunc(%q, func(%q)) = %v, want %v",
+				ct.str, ct.r, !ct.expected, ct.expected)
+		}
+	}
+}
+
 var EqualFoldTests = []struct {
 	s, t string
 	out  bool
@@ -1658,7 +1679,7 @@ func TestCutPrefix(t *testing.T) {
 
 var cutSuffixTests = []struct {
 	s, sep string
-	after  string
+	before string
 	found  bool
 }{
 	{"abc", "bc", "a", true},
@@ -1671,8 +1692,8 @@ var cutSuffixTests = []struct {
 
 func TestCutSuffix(t *testing.T) {
 	for _, tt := range cutSuffixTests {
-		if after, found := CutSuffix(tt.s, tt.sep); after != tt.after || found != tt.found {
-			t.Errorf("CutSuffix(%q, %q) = %q, %v, want %q, %v", tt.s, tt.sep, after, found, tt.after, tt.found)
+		if before, found := CutSuffix(tt.s, tt.sep); before != tt.before || found != tt.found {
+			t.Errorf("CutSuffix(%q, %q) = %q, %v, want %q, %v", tt.s, tt.sep, before, found, tt.before, tt.found)
 		}
 	}
 }
@@ -1880,6 +1901,25 @@ func BenchmarkRepeat(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					Repeat(s[:n], c)
 				}
+			})
+		}
+	}
+}
+
+func BenchmarkRepeatLarge(b *testing.B) {
+	s := Repeat("@", 8*1024)
+	for j := 8; j <= 30; j++ {
+		for _, k := range []int{1, 16, 4097} {
+			s := s[:k]
+			n := (1 << j) / k
+			if n == 0 {
+				continue
+			}
+			b.Run(fmt.Sprintf("%d/%d", 1<<j, k), func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					Repeat(s, n)
+				}
+				b.SetBytes(int64(n * len(s)))
 			})
 		}
 	}

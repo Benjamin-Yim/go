@@ -9,10 +9,8 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"internal/buildcfg"
 	"internal/testenv"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -24,14 +22,14 @@ import (
 )
 
 // Matches lines in genssa output that are marked "isstmt", and the parenthesized plus-prefixed line number is a submatch
-var asmLine *regexp.Regexp = regexp.MustCompile(`^\s[vb][0-9]+\s+[0-9]+\s\(\+([0-9]+)\)`)
+var asmLine *regexp.Regexp = regexp.MustCompile(`^\s[vb]\d+\s+\d+\s\(\+(\d+)\)`)
 
 // this matches e.g.                            `   v123456789   000007   (+9876654310) MOVUPS	X15, ""..autotmp_2-32(SP)`
 
 // Matches lines in genssa output that describe an inlined file.
 // Note it expects an unadventurous choice of basename.
 var sepRE = regexp.QuoteMeta(string(filepath.Separator))
-var inlineLine *regexp.Regexp = regexp.MustCompile(`^#\s.*` + sepRE + `[-a-zA-Z0-9_]+\.go:([0-9]+)`)
+var inlineLine *regexp.Regexp = regexp.MustCompile(`^#\s.*` + sepRE + `[-\w]+\.go:(\d+)`)
 
 // this matches e.g.                                 #  /pa/inline-dumpxxxx.go:6
 
@@ -85,7 +83,7 @@ func TestDebugLinesPushback(t *testing.T) {
 
 	case "arm64", "amd64": // register ABI
 		fn := "(*List[go.shape.int_0]).PushBack"
-		if buildcfg.Experiment.Unified {
+		if true /* was buildcfg.Experiment.Unified */ {
 			// Unified mangles differently
 			fn = "(*List[go.shape.int]).PushBack"
 		}
@@ -102,7 +100,7 @@ func TestDebugLinesConvert(t *testing.T) {
 
 	case "arm64", "amd64": // register ABI
 		fn := "G[go.shape.int_0]"
-		if buildcfg.Experiment.Unified {
+		if true /* was buildcfg.Experiment.Unified */ {
 			// Unified mangles differently
 			fn = "G[go.shape.int]"
 		}
@@ -142,7 +140,7 @@ func compileAndDump(t *testing.T, file, function, moreGCFlags string) []byte {
 		panic(fmt.Sprintf("Could not get abspath of testdata directory and file, %v", err))
 	}
 
-	cmd := exec.Command(testenv.GoToolPath(t), "build", "-o", "foo.o", "-gcflags=-d=ssa/genssa/dump="+function+" "+moreGCFlags, source)
+	cmd := testenv.Command(t, testenv.GoToolPath(t), "build", "-o", "foo.o", "-gcflags=-d=ssa/genssa/dump="+function+" "+moreGCFlags, source)
 	cmd.Dir = tmpdir
 	cmd.Env = replaceEnv(cmd.Env, "GOSSADIR", tmpdir)
 	testGoos := "linux" // default to linux
@@ -223,7 +221,7 @@ func testInlineStack(t *testing.T, file, function string, wantStacks [][]int) {
 	sortInlineStacks(gotStacks)
 	sortInlineStacks(wantStacks)
 	if !reflect.DeepEqual(wantStacks, gotStacks) {
-		t.Errorf("wanted inlines %+v but got %+v", wantStacks, gotStacks)
+		t.Errorf("wanted inlines %+v but got %+v\n%s", wantStacks, gotStacks, dumpBytes)
 	}
 
 }

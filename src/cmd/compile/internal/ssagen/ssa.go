@@ -27,7 +27,6 @@ import (
 	"cmd/compile/internal/typecheck"
 	"cmd/compile/internal/types"
 	"cmd/internal/obj"
-	"cmd/internal/obj/x86"
 	"cmd/internal/objabi"
 	"cmd/internal/src"
 	"cmd/internal/sys"
@@ -96,13 +95,22 @@ func InitConfig() {
 	ir.Syms.AssertE2I2 = typecheck.LookupRuntimeFunc("assertE2I2")
 	ir.Syms.AssertI2I = typecheck.LookupRuntimeFunc("assertI2I")
 	ir.Syms.AssertI2I2 = typecheck.LookupRuntimeFunc("assertI2I2")
+	ir.Syms.CgoCheckMemmove = typecheck.LookupRuntimeFunc("cgoCheckMemmove")
+	ir.Syms.CgoCheckPtrWrite = typecheck.LookupRuntimeFunc("cgoCheckPtrWrite")
 	ir.Syms.CheckPtrAlignment = typecheck.LookupRuntimeFunc("checkptrAlignment")
 	ir.Syms.Deferproc = typecheck.LookupRuntimeFunc("deferproc")
 	ir.Syms.DeferprocStack = typecheck.LookupRuntimeFunc("deferprocStack")
 	ir.Syms.Deferreturn = typecheck.LookupRuntimeFunc("deferreturn")
 	ir.Syms.Duffcopy = typecheck.LookupRuntimeFunc("duffcopy")
 	ir.Syms.Duffzero = typecheck.LookupRuntimeFunc("duffzero")
-	ir.Syms.GCWriteBarrier = typecheck.LookupRuntimeFunc("gcWriteBarrier")
+	ir.Syms.GCWriteBarrier[0] = typecheck.LookupRuntimeFunc("gcWriteBarrier1")
+	ir.Syms.GCWriteBarrier[1] = typecheck.LookupRuntimeFunc("gcWriteBarrier2")
+	ir.Syms.GCWriteBarrier[2] = typecheck.LookupRuntimeFunc("gcWriteBarrier3")
+	ir.Syms.GCWriteBarrier[3] = typecheck.LookupRuntimeFunc("gcWriteBarrier4")
+	ir.Syms.GCWriteBarrier[4] = typecheck.LookupRuntimeFunc("gcWriteBarrier5")
+	ir.Syms.GCWriteBarrier[5] = typecheck.LookupRuntimeFunc("gcWriteBarrier6")
+	ir.Syms.GCWriteBarrier[6] = typecheck.LookupRuntimeFunc("gcWriteBarrier7")
+	ir.Syms.GCWriteBarrier[7] = typecheck.LookupRuntimeFunc("gcWriteBarrier8")
 	ir.Syms.Goschedguarded = typecheck.LookupRuntimeFunc("goschedguarded")
 	ir.Syms.Growslice = typecheck.LookupRuntimeFunc("growslice")
 	ir.Syms.Memmove = typecheck.LookupRuntimeFunc("memmove")
@@ -123,31 +131,18 @@ func InitConfig() {
 	ir.Syms.Racereadrange = typecheck.LookupRuntimeFunc("racereadrange")
 	ir.Syms.Racewrite = typecheck.LookupRuntimeFunc("racewrite")
 	ir.Syms.Racewriterange = typecheck.LookupRuntimeFunc("racewriterange")
+	ir.Syms.WBZero = typecheck.LookupRuntimeFunc("wbZero")
+	ir.Syms.WBMove = typecheck.LookupRuntimeFunc("wbMove")
 	ir.Syms.X86HasPOPCNT = typecheck.LookupRuntimeVar("x86HasPOPCNT")       // bool
 	ir.Syms.X86HasSSE41 = typecheck.LookupRuntimeVar("x86HasSSE41")         // bool
 	ir.Syms.X86HasFMA = typecheck.LookupRuntimeVar("x86HasFMA")             // bool
 	ir.Syms.ARMHasVFPv4 = typecheck.LookupRuntimeVar("armHasVFPv4")         // bool
 	ir.Syms.ARM64HasATOMICS = typecheck.LookupRuntimeVar("arm64HasATOMICS") // bool
 	ir.Syms.Staticuint64s = typecheck.LookupRuntimeVar("staticuint64s")
-	ir.Syms.Typedmemclr = typecheck.LookupRuntimeFunc("typedmemclr")
 	ir.Syms.Typedmemmove = typecheck.LookupRuntimeFunc("typedmemmove")
 	ir.Syms.Udiv = typecheck.LookupRuntimeVar("udiv")                 // asm func with special ABI
 	ir.Syms.WriteBarrier = typecheck.LookupRuntimeVar("writeBarrier") // struct { bool; ... }
 	ir.Syms.Zerobase = typecheck.LookupRuntimeVar("zerobase")
-
-	// asm funcs with special ABI
-	if base.Ctxt.Arch.Name == "amd64" {
-		GCWriteBarrierReg = map[int16]*obj.LSym{
-			x86.REG_AX: typecheck.LookupRuntimeFunc("gcWriteBarrier"),
-			x86.REG_CX: typecheck.LookupRuntimeFunc("gcWriteBarrierCX"),
-			x86.REG_DX: typecheck.LookupRuntimeFunc("gcWriteBarrierDX"),
-			x86.REG_BX: typecheck.LookupRuntimeFunc("gcWriteBarrierBX"),
-			x86.REG_BP: typecheck.LookupRuntimeFunc("gcWriteBarrierBP"),
-			x86.REG_SI: typecheck.LookupRuntimeFunc("gcWriteBarrierSI"),
-			x86.REG_R8: typecheck.LookupRuntimeFunc("gcWriteBarrierR8"),
-			x86.REG_R9: typecheck.LookupRuntimeFunc("gcWriteBarrierR9"),
-		}
-	}
 
 	if Arch.LinkArch.Family == sys.Wasm {
 		BoundsCheckFunc[ssa.BoundsIndex] = typecheck.LookupRuntimeFunc("goPanicIndex")
@@ -206,8 +201,6 @@ func InitConfig() {
 	}
 
 	// Wasm (all asm funcs with special ABIs)
-	ir.Syms.WasmMove = typecheck.LookupRuntimeVar("wasmMove")
-	ir.Syms.WasmZero = typecheck.LookupRuntimeVar("wasmZero")
 	ir.Syms.WasmDiv = typecheck.LookupRuntimeVar("wasmDiv")
 	ir.Syms.WasmTruncS = typecheck.LookupRuntimeVar("wasmTruncS")
 	ir.Syms.WasmTruncU = typecheck.LookupRuntimeVar("wasmTruncU")
@@ -254,7 +247,7 @@ func abiForFunc(fn *ir.Func, abi0, abi1 *abi.ABIConfig) *abi.ABIConfig {
 	return a
 }
 
-// dvarint writes a varint v to the funcdata in symbol x and returns the new offset
+// dvarint writes a varint v to the funcdata in symbol x and returns the new offset.
 func dvarint(x *obj.LSym, off int, v int64) int {
 	if v < 0 || v > 1e9 {
 		panic(fmt.Sprintf("dvarint: bad offset for funcdata - %v", v))
@@ -1115,7 +1108,7 @@ func (s *state) newValue4(op ssa.Op, t *types.Type, arg0, arg1, arg2, arg3 *ssa.
 	return s.curBlock.NewValue4(s.peekPos(), op, t, arg0, arg1, arg2, arg3)
 }
 
-// newValue4 adds a new value with four arguments and an auxint value to the current block.
+// newValue4I adds a new value with four arguments and an auxint value to the current block.
 func (s *state) newValue4I(op ssa.Op, t *types.Type, aux int64, arg0, arg1, arg2, arg3 *ssa.Value) *ssa.Value {
 	return s.curBlock.NewValue4I(s.peekPos(), op, t, aux, arg0, arg1, arg2, arg3)
 }
@@ -1147,7 +1140,7 @@ func (s *state) entryNewValue1(op ssa.Op, t *types.Type, arg *ssa.Value) *ssa.Va
 	return s.entryBlock().NewValue1(src.NoXPos, op, t, arg)
 }
 
-// entryNewValue1 adds a new value with one argument and an auxint value to the entry block.
+// entryNewValue1I adds a new value with one argument and an auxint value to the entry block.
 func (s *state) entryNewValue1I(op ssa.Op, t *types.Type, auxint int64, arg *ssa.Value) *ssa.Value {
 	return s.entryBlock().NewValue1I(src.NoXPos, op, t, auxint, arg)
 }
@@ -1588,18 +1581,16 @@ func (s *state) stmt(n ir.Node) {
 		}
 
 		// mayOverlap keeps track of whether the LHS and RHS might
-		// refer to overlapping memory.
-		mayOverlap := true
-		if n.Y == nil {
-			// Not a move at all, mayOverlap is not relevant.
-		} else if n.Def {
-			// A variable being defined cannot overlap anything else.
-			mayOverlap = false
-		} else if n.X.Op() == ir.ONAME && n.Y.Op() == ir.ONAME {
-			// Two named things never overlap.
-			// (Or they are identical, which we treat as nonoverlapping.)
-			mayOverlap = false
-		} else if n.Y.Op() == ir.ODEREF {
+		// refer to partially overlapping memory. Partial overlapping can
+		// only happen for arrays, see the comment in moveWhichMayOverlap.
+		//
+		// If both sides of the assignment are not dereferences, then partial
+		// overlap can't happen. Partial overlap can only occur only when the
+		// arrays referenced are strictly smaller parts of the same base array.
+		// If one side of the assignment is a full array, then partial overlap
+		// can't happen. (The arrays are either disjoint or identical.)
+		mayOverlap := n.X.Op() == ir.ODEREF && (n.Y != nil && n.Y.Op() == ir.ODEREF)
+		if n.Y != nil && n.Y.Op() == ir.ODEREF {
 			p := n.Y.(*ir.StarExpr).X
 			for p.Op() == ir.OCONVNOP {
 				p = p.(*ir.ConvExpr).X
@@ -1609,12 +1600,6 @@ func (s *state) stmt(n ir.Node) {
 				// That memory can't overlap with the memory being written.
 				mayOverlap = false
 			}
-		} else if n.Y.Op() == ir.ORESULT || n.Y.Op() == ir.OCALLFUNC || n.Y.Op() == ir.OCALLINTER {
-			// When copying values out of the return area of a call, we know
-			// the source and destination don't overlap. Importantly, we must
-			// set mayOverlap so we don't introduce a call to memmove while
-			// we still have live data in the argument area.
-			mayOverlap = false
 		}
 
 		// Evaluate RHS.
@@ -1700,12 +1685,12 @@ func (s *state) stmt(n ir.Node) {
 			// Currently doesn't really work because (*p)[:len(*p)] appears here as:
 			//    tmp = len(*p)
 			//    (*p)[:tmp]
-			//if j != nil && (j.Op == OLEN && SameSafeExpr(j.Left, n.Left)) {
+			// if j != nil && (j.Op == OLEN && SameSafeExpr(j.Left, n.Left)) {
 			//      j = nil
-			//}
-			//if k != nil && (k.Op == OCAP && SameSafeExpr(k.Left, n.Left)) {
+			// }
+			// if k != nil && (k.Op == OCAP && SameSafeExpr(k.Left, n.Left)) {
 			//      k = nil
-			//}
+			// }
 			if i == nil {
 				skip |= skipPtr
 				if j == nil {
@@ -3314,7 +3299,7 @@ func (s *state) exprCheckPtr(n ir.Node, checkPtrOK bool) *ssa.Value {
 
 	case ir.OGETCALLERSP:
 		n := n.(*ir.CallExpr)
-		return s.newValue0(ssa.OpGetCallerSP, n.Type())
+		return s.newValue1(ssa.OpGetCallerSP, n.Type(), s.mem())
 
 	case ir.OAPPEND:
 		return s.append(n.(*ir.CallExpr), false)
@@ -3999,7 +3984,7 @@ func InitTables() {
 
 	add("runtime", "getcallersp",
 		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
-			return s.newValue0(ssa.OpGetCallerSP, s.f.Config.Types.Uintptr)
+			return s.newValue1(ssa.OpGetCallerSP, s.f.Config.Types.Uintptr, s.mem())
 		},
 		all...)
 
@@ -4010,27 +3995,23 @@ func InitTables() {
 		},
 		sys.ARM64, sys.PPC64)
 
+	brev_arch := []sys.ArchFamily{sys.AMD64, sys.I386, sys.ARM64, sys.ARM, sys.S390X}
+	if buildcfg.GOPPC64 >= 10 {
+		// Use only on Power10 as the new byte reverse instructions that Power10 provide
+		// make it worthwhile as an intrinsic
+		brev_arch = append(brev_arch, sys.PPC64)
+	}
 	/******** runtime/internal/sys ********/
-	addF("runtime/internal/sys", "Ctz32",
-		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
-			return s.newValue1(ssa.OpCtz32, types.Types[types.TINT], args[0])
-		},
-		sys.AMD64, sys.ARM64, sys.ARM, sys.S390X, sys.MIPS, sys.PPC64)
-	addF("runtime/internal/sys", "Ctz64",
-		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
-			return s.newValue1(ssa.OpCtz64, types.Types[types.TINT], args[0])
-		},
-		sys.AMD64, sys.ARM64, sys.ARM, sys.S390X, sys.MIPS, sys.PPC64)
 	addF("runtime/internal/sys", "Bswap32",
 		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 			return s.newValue1(ssa.OpBswap32, types.Types[types.TUINT32], args[0])
 		},
-		sys.AMD64, sys.ARM64, sys.ARM, sys.S390X)
+		brev_arch...)
 	addF("runtime/internal/sys", "Bswap64",
 		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 			return s.newValue1(ssa.OpBswap64, types.Types[types.TUINT64], args[0])
 		},
-		sys.AMD64, sys.ARM64, sys.ARM, sys.S390X)
+		brev_arch...)
 
 	/****** Prefetch ******/
 	makePrefetchFunc := func(op ssa.Op) func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
@@ -4557,7 +4538,16 @@ func InitTables() {
 	alias("math/bits", "ReverseBytes64", "runtime/internal/sys", "Bswap64", all...)
 	alias("math/bits", "ReverseBytes32", "runtime/internal/sys", "Bswap32", all...)
 	// ReverseBytes inlines correctly, no need to intrinsify it.
-	// ReverseBytes16 lowers to a rotate, no need for anything special here.
+	// Nothing special is needed for targets where ReverseBytes16 lowers to a rotate
+	// On Power10, 16-bit rotate is not available so use BRH instruction
+	if buildcfg.GOPPC64 >= 10 {
+		addF("math/bits", "ReverseBytes16",
+			func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
+				return s.newValue1(ssa.OpBswap16, types.Types[types.TUINT], args[0])
+			},
+			sys.PPC64)
+	}
+
 	addF("math/bits", "Len64",
 		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 			return s.newValue1(ssa.OpBitLen64, types.Types[types.TINT], args[0])
@@ -4738,14 +4728,14 @@ func InitTables() {
 		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 			return s.newValue3(ssa.OpAdd64carry, types.NewTuple(types.Types[types.TUINT64], types.Types[types.TUINT64]), args[0], args[1], args[2])
 		},
-		sys.AMD64, sys.ARM64, sys.PPC64, sys.S390X, sys.RISCV64)
-	alias("math/bits", "Add", "math/bits", "Add64", sys.ArchAMD64, sys.ArchARM64, sys.ArchPPC64, sys.ArchPPC64LE, sys.ArchS390X, sys.ArchRISCV64)
+		sys.AMD64, sys.ARM64, sys.PPC64, sys.S390X, sys.RISCV64, sys.Loong64)
+	alias("math/bits", "Add", "math/bits", "Add64", p8...)
 	addF("math/bits", "Sub64",
 		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 			return s.newValue3(ssa.OpSub64borrow, types.NewTuple(types.Types[types.TUINT64], types.Types[types.TUINT64]), args[0], args[1], args[2])
 		},
-		sys.AMD64, sys.ARM64, sys.PPC64, sys.S390X, sys.RISCV64)
-	alias("math/bits", "Sub", "math/bits", "Sub64", sys.ArchAMD64, sys.ArchARM64, sys.ArchS390X, sys.ArchRISCV64)
+		sys.AMD64, sys.ARM64, sys.PPC64, sys.S390X, sys.RISCV64, sys.Loong64)
+	alias("math/bits", "Sub", "math/bits", "Sub64", p8...)
 	addF("math/bits", "Div64",
 		func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
 			// check for divide-by-zero/overflow and panic with appropriate message
@@ -4758,8 +4748,8 @@ func InitTables() {
 		sys.AMD64)
 	alias("math/bits", "Div", "math/bits", "Div64", sys.ArchAMD64)
 
-	alias("runtime/internal/sys", "Ctz8", "math/bits", "TrailingZeros8", all...)
 	alias("runtime/internal/sys", "TrailingZeros8", "math/bits", "TrailingZeros8", all...)
+	alias("runtime/internal/sys", "TrailingZeros32", "math/bits", "TrailingZeros32", all...)
 	alias("runtime/internal/sys", "TrailingZeros64", "math/bits", "TrailingZeros64", all...)
 	alias("runtime/internal/sys", "Len8", "math/bits", "Len8", all...)
 	alias("runtime/internal/sys", "Len64", "math/bits", "Len64", all...)
@@ -6545,7 +6535,7 @@ func (s *state) variable(n ir.Node, t *types.Type) *ssa.Value {
 
 	if s.curBlock == s.f.Entry {
 		// No variable should be live at entry.
-		s.Fatalf("Value live at entry. It shouldn't be. func %s, node %v, value %v", s.f.Name, n, v)
+		s.f.Fatalf("value %v (%v) incorrectly live at entry", n, v)
 	}
 	// Make a FwdRef, which records a value that's live on block input.
 	// We'll find the matching definition as part of insertPhis.
@@ -6948,7 +6938,7 @@ func genssa(f *ssa.Func, pp *objw.Progs) {
 	// debuggers may attribute it to previous function in program.
 	firstPos := src.NoXPos
 	for _, v := range f.Entry.Values {
-		if v.Pos.IsStmt() == src.PosIsStmt {
+		if v.Pos.IsStmt() == src.PosIsStmt && v.Op != ssa.OpArg && v.Op != ssa.OpArgIntReg && v.Op != ssa.OpArgFloatReg && v.Op != ssa.OpLoadReg && v.Op != ssa.OpStoreReg {
 			firstPos = v.Pos
 			v.Pos = firstPos.WithDefaultStmt()
 			break
@@ -7010,7 +7000,7 @@ func genssa(f *ssa.Func, pp *objw.Progs) {
 			case ssa.OpGetG:
 				// nothing to do when there's a g register,
 				// and checkLower complains if there's not
-			case ssa.OpVarDef, ssa.OpVarLive, ssa.OpKeepAlive:
+			case ssa.OpVarDef, ssa.OpVarLive, ssa.OpKeepAlive, ssa.OpWBend:
 				// nothing to do; already used by liveness
 			case ssa.OpPhi:
 				CheckLoweredPhi(v)
@@ -7029,6 +7019,7 @@ func genssa(f *ssa.Func, pp *objw.Progs) {
 				inlMarkList = append(inlMarkList, p)
 				pos := v.Pos.AtColumn1()
 				inlMarksByPos[pos] = append(inlMarksByPos[pos], p)
+				firstPos = src.NoXPos
 
 			default:
 				// Special case for first line in function; move it to the start (which cannot be a register-valued instruction)
@@ -7124,6 +7115,8 @@ func genssa(f *ssa.Func, pp *objw.Progs) {
 	}
 
 	if inlMarks != nil {
+		hasCall := false
+
 		// We have some inline marks. Try to find other instructions we're
 		// going to emit anyway, and use those instructions instead of the
 		// inline marks.
@@ -7140,6 +7133,9 @@ func genssa(f *ssa.Func, pp *objw.Progs) {
 				// Don't use inline marks themselves. We don't know
 				// whether they will be zero-sized or not yet.
 				continue
+			}
+			if p.As == obj.ACALL || p.As == obj.ADUFFCOPY || p.As == obj.ADUFFZERO {
+				hasCall = true
 			}
 			pos := p.Pos.AtColumn1()
 			s := inlMarksByPos[pos]
@@ -7164,6 +7160,45 @@ func genssa(f *ssa.Func, pp *objw.Progs) {
 		for _, p := range inlMarkList {
 			if p.As != obj.ANOP {
 				pp.CurFunc.LSym.Func().AddInlMark(p, inlMarks[p])
+			}
+		}
+
+		if e.stksize == 0 && !hasCall {
+			// Frameless leaf function. It doesn't need any preamble,
+			// so make sure its first instruction isn't from an inlined callee.
+			// If it is, add a nop at the start of the function with a position
+			// equal to the start of the function.
+			// This ensures that runtime.FuncForPC(uintptr(reflect.ValueOf(fn).Pointer())).Name()
+			// returns the right answer. See issue 58300.
+			for p := pp.Text; p != nil; p = p.Link {
+				if p.As == obj.AFUNCDATA || p.As == obj.APCDATA || p.As == obj.ATEXT || p.As == obj.ANOP {
+					continue
+				}
+				if base.Ctxt.PosTable.Pos(p.Pos).Base().InliningIndex() >= 0 {
+					// Make a real (not 0-sized) nop.
+					nop := Arch.Ginsnop(pp)
+					nop.Pos = e.curfn.Pos().WithIsStmt()
+
+					// Unfortunately, Ginsnop puts the instruction at the
+					// end of the list. Move it up to just before p.
+
+					// Unlink from the current list.
+					for x := pp.Text; x != nil; x = x.Link {
+						if x.Link == nop {
+							x.Link = nop.Link
+							break
+						}
+					}
+					// Splice in right before p.
+					for x := pp.Text; x != nil; x = x.Link {
+						if x.Link == p {
+							nop.Link = p
+							x.Link = nop
+							break
+						}
+					}
+				}
+				break
 			}
 		}
 	}
@@ -7719,7 +7754,7 @@ func (s *State) PrepareCall(v *ssa.Value) {
 	idx := s.livenessMap.Get(v)
 	if !idx.StackMapValid() {
 		// See Liveness.hasStackMap.
-		if sym, ok := v.Aux.(*ssa.AuxCall); !ok || !(sym.Fn == ir.Syms.Typedmemclr || sym.Fn == ir.Syms.Typedmemmove) {
+		if sym, ok := v.Aux.(*ssa.AuxCall); !ok || !(sym.Fn == ir.Syms.WBZero || sym.Fn == ir.Syms.WBMove) {
 			base.Fatalf("missing stack map index for %v", v.LongString())
 		}
 	}
@@ -7833,7 +7868,7 @@ func (e *ssafn) Line(pos src.XPos) string {
 	return base.FmtPos(pos)
 }
 
-// Log logs a message from the compiler.
+// Logf logs a message from the compiler.
 func (e *ssafn) Logf(msg string, args ...interface{}) {
 	if e.log {
 		fmt.Printf(msg, args...)
@@ -7844,7 +7879,7 @@ func (e *ssafn) Log() bool {
 	return e.log
 }
 
-// Fatal reports a compiler error and exits.
+// Fatalf reports a compiler error and exits.
 func (e *ssafn) Fatalf(pos src.XPos, msg string, args ...interface{}) {
 	base.Pos = pos
 	nargs := append([]interface{}{ir.FuncName(e.curfn)}, args...)
@@ -7871,12 +7906,14 @@ func (e *ssafn) Syslook(name string) *obj.LSym {
 		return ir.Syms.Goschedguarded
 	case "writeBarrier":
 		return ir.Syms.WriteBarrier
-	case "gcWriteBarrier":
-		return ir.Syms.GCWriteBarrier
-	case "typedmemmove":
-		return ir.Syms.Typedmemmove
-	case "typedmemclr":
-		return ir.Syms.Typedmemclr
+	case "wbZero":
+		return ir.Syms.WBZero
+	case "wbMove":
+		return ir.Syms.WBMove
+	case "cgoCheckMemmove":
+		return ir.Syms.CgoCheckMemmove
+	case "cgoCheckPtrWrite":
+		return ir.Syms.CgoCheckPtrWrite
 	}
 	e.Fatalf(src.NoXPos, "unknown Syslook func %v", name)
 	return nil
@@ -7913,10 +7950,9 @@ func clobberBase(n ir.Node) ir.Node {
 // callTargetLSym returns the correct LSym to call 'callee' using its ABI.
 func callTargetLSym(callee *ir.Name) *obj.LSym {
 	if callee.Func == nil {
-		// TODO(austin): This happens in a few cases of
-		// compiler-generated functions. These are all
-		// ABIInternal. It would be better if callee.Func was
-		// never nil and we didn't need this case.
+		// TODO(austin): This happens in case of interface method I.M from imported package.
+		// It's ABIInternal, and would be better if callee.Func was never nil and we didn't
+		// need this case.
 		return callee.Linksym()
 	}
 
@@ -7966,13 +8002,13 @@ func deferstruct() *types.Type {
 	}
 
 	// build struct holding the above fields
-	s := types.NewStruct(types.NoPkg, fields)
+	s := types.NewStruct(fields)
 	s.SetNoalg(true)
 	types.CalcStructSize(s)
 	return s
 }
 
-// SlotAddr uses LocalSlot information to initialize an obj.Addr
+// SpillSlotAddr uses LocalSlot information to initialize an obj.Addr
 // The resulting addr is used in a non-standard context -- in the prologue
 // of a function, before the frame has been constructed, so the standard
 // addressing for the parameters will be wrong.
@@ -7989,6 +8025,3 @@ var (
 	BoundsCheckFunc [ssa.BoundsKindCount]*obj.LSym
 	ExtendCheckFunc [ssa.BoundsKindCount]*obj.LSym
 )
-
-// GCWriteBarrierReg maps from registers to gcWriteBarrier implementation LSyms.
-var GCWriteBarrierReg map[int16]*obj.LSym

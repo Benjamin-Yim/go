@@ -151,16 +151,16 @@ func testMain(m *testing.M) (int, error) {
 	myContext := build.Default
 	myContext.GOROOT = goroot
 	myContext.GOPATH = gopath
-	runtimeP, err := myContext.Import("runtime", ".", build.ImportComment)
-	if err != nil {
-		return 0, fmt.Errorf("import failed: %v", err)
-	}
-	gorootInstallDir = runtimeP.PkgTargetRoot + "_dynlink"
 
 	// All tests depend on runtime being built into a shared library. Because
 	// that takes a few seconds, do it here and have all tests use the version
 	// built here.
 	goCmd(nil, append([]string{"install", "-buildmode=shared"}, minpkgs...)...)
+
+	shlib := goCmd(nil, "list", "-linkshared", "-f={{.Shlib}}", "runtime")
+	if shlib != "" {
+		gorootInstallDir = filepath.Dir(shlib)
+	}
 
 	myContext.InstallSuffix = "_dynlink"
 	depP, err := myContext.Import("./depBase", ".", build.ImportComment)
@@ -1100,8 +1100,20 @@ func TestIssue44031(t *testing.T) {
 
 // Test that we use a variable from shared libraries (which implement an
 // interface in shared libraries.). A weak reference is used in the itab
-// in main process. It can cause unreacheble panic. See issue 47873.
+// in main process. It can cause unreachable panic. See issue 47873.
 func TestIssue47873(t *testing.T) {
 	goCmd(t, "install", "-buildmode=shared", "-linkshared", "./issue47837/a")
 	goCmd(t, "run", "-linkshared", "./issue47837/main")
+}
+
+// Test that we can build std in shared mode.
+func TestStd(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skip in short mode")
+	}
+	t.Parallel()
+	// Use a temporary pkgdir to not interfere with other tests, and not write to GOROOT.
+	// Cannot use goCmd as it runs with cloned GOROOT which is incomplete.
+	runWithEnv(t, "building std", []string{"GOROOT=" + oldGOROOT},
+		filepath.Join(oldGOROOT, "bin", "go"), "install", "-buildmode=shared", "-pkgdir="+t.TempDir(), "std")
 }

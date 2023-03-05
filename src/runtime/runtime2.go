@@ -512,6 +512,7 @@ type g struct {
 	sigcode0       uintptr
 	sigcode1       uintptr
 	sigpc          uintptr
+	parentGoid     uint64          // goid of goroutine that created this goroutine
 	gopc           uintptr         // 创建这个goroutine的go 的pc. pc of go statement that created this goroutine
 	ancestors      *[]ancestorInfo // ancestor information goroutine(s) that created this goroutine (only used if debug.tracebackancestors)
 	startpc        uintptr         // goroutine函数的pc,go func 的pc 。pc of goroutine function
@@ -547,6 +548,13 @@ const (
 	// like Windows.
 	tlsSlots = 6
 	tlsSize  = tlsSlots * goarch.PtrSize
+)
+
+// Values for m.freeWait.
+const (
+	freeMStack = 0 // M done, free stack and reference.
+	freeMRef   = 1 // M done, free reference.
+	freeMWait  = 2 // M still in use.
 )
 
 // M 是指OS 内核线程，代表着真正执行计算的资源，在绑定有效的 P 后，
@@ -585,8 +593,9 @@ type m struct {
 	blocked       bool // m 被阻塞时为 true。m is blocked on a note
 	newSigstack   bool // 在一个C 线程被调用 sigaltstack. minit on C thread called sigaltstack
 	printlock     int8
-	incgo         bool   // m 执行 cgo 调用. m is executing a cgo call
-	freeWait      uint32 // 如果等0，安全的释放 g0 并且进行原子的删除m. if == 0, safe to free g0 and delete m (atomic)
+	incgo         bool          // m 执行 cgo 调用. m is executing a cgo call
+	isextra       bool          // m is an extra m
+	freeWait      atomic.Uint32 // 如果等0，安全的释放 g0 并且进行原子的删除m. if == 0, safe to free g0 and delete m (atomic)
 	fastrand      uint64
 	needextram    bool
 	traceback     uint8
@@ -831,6 +840,11 @@ type p struct {
 	// preempt被设置为表示这个P应该尽快进入调度器（不管它上面运行的是什么G）。
 	preempt bool
 
+	// pageTraceBuf is a buffer for writing out page allocation/free/scavenge traces.
+	//
+	// Used only if GOEXPERIMENT=pagetrace.
+	pageTraceBuf pageTraceBuf
+
 	// Padding is no longer needed. False sharing is now not a worry because p is large enough
 	// that its size class is an integer multiple of the cache line size (for any of our architectures).
 	// 不再需要填充。虚假的共享现在不需要担心了，因为p足够大，它的大小类是缓存行大小的整数倍（对于我们的任何架构）。
@@ -982,6 +996,7 @@ type _func struct {
 	pcln      uint32
 	npcdata   uint32
 	cuOffset  uint32 // 此函数的 CU 的 runtime.cutab 偏移量。runtime.cutab offset of this function's CU
+	startLine int32  // line number of start of function (func keyword/TEXT directive)
 	funcID    funcID // 为某些特殊的运行时函数设置。set for certain special runtime functions
 	flag      funcFlag
 	_         [1]byte // pad
@@ -1014,11 +1029,12 @@ type _func struct {
 // A *Func can be either a *_func or a *funcinl, and they are distinguished
 // by the first uintptr.
 type funcinl struct {
-	ones  uint32  // set to ^0 to distinguish from _func
-	entry uintptr // entry of the real (the "outermost") frame
-	name  string
-	file  string
-	line  int
+	ones      uint32  // set to ^0 to distinguish from _func
+	entry     uintptr // entry of the real (the "outermost") frame
+	name      string
+	file      string
+	line      int32
+	startLine int32
 }
 
 // layout of Itab known to compilers

@@ -6,7 +6,6 @@ package exec
 
 import (
 	"errors"
-	"internal/godebug"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -103,7 +102,8 @@ func LookPath(file string) (string, error) {
 	)
 	if _, found := syscall.Getenv("NoDefaultCurrentDirectoryInExePath"); !found {
 		if f, err := findExecutable(filepath.Join(".", file), exts); err == nil {
-			if godebug.Get("execerrdot") == "0" {
+			if execerrdot.Value() == "0" {
+				execerrdot.IncNonDefault()
 				return f, nil
 			}
 			dotf, dotErr = f, &Error{file, ErrDot}
@@ -128,8 +128,11 @@ func LookPath(file string) (string, error) {
 				}
 			}
 
-			if !filepath.IsAbs(f) && godebug.Get("execerrdot") != "0" {
-				return f, &Error{file, ErrDot}
+			if !filepath.IsAbs(f) {
+				if execerrdot.Value() != "0" {
+					return f, &Error{file, ErrDot}
+				}
+				execerrdot.IncNonDefault()
 			}
 			return f, nil
 		}

@@ -78,7 +78,7 @@ func storeByType(t *types.Type) obj.As {
 	panic("bad store type")
 }
 
-// makeshift encodes a register shifted by a constant, used as an Offset in Prog
+// makeshift encodes a register shifted by a constant, used as an Offset in Prog.
 func makeshift(v *ssa.Value, reg int16, typ int64, s int64) int64 {
 	if s < 0 || s >= 64 {
 		v.Fatalf("shift out of range: %d", s)
@@ -86,7 +86,7 @@ func makeshift(v *ssa.Value, reg int16, typ int64, s int64) int64 {
 	return int64(reg&31)<<16 | typ | (s&63)<<10
 }
 
-// genshift generates a Prog for r = r0 op (r1 shifted by n)
+// genshift generates a Prog for r = r0 op (r1 shifted by n).
 func genshift(s *ssagen.State, v *ssa.Value, as obj.As, r0, r1, r int16, typ int64, n int64) *obj.Prog {
 	p := s.Prog(as)
 	p.From.Type = obj.TYPE_SHIFT
@@ -1065,7 +1065,9 @@ func ssaGenValue(s *ssagen.State, v *ssa.Value) {
 		p := s.Prog(obj.ACALL)
 		p.To.Type = obj.TYPE_MEM
 		p.To.Name = obj.NAME_EXTERN
-		p.To.Sym = v.Aux.(*obj.LSym)
+		// AuxInt encodes how many buffer entries we need.
+		p.To.Sym = ir.Syms.GCWriteBarrier[v.AuxInt-1]
+
 	case ssa.OpARM64LoweredPanicBoundsA, ssa.OpARM64LoweredPanicBoundsB, ssa.OpARM64LoweredPanicBoundsC:
 		p := s.Prog(obj.ACALL)
 		p.To.Type = obj.TYPE_MEM
@@ -1223,13 +1225,13 @@ var blockJump = map[ssa.BlockKind]struct {
 	ssa.BlockARM64GEnoov: {arm64.ABPL, arm64.ABMI},
 }
 
-// To model a 'LEnoov' ('<=' without overflow checking) branching
+// To model a 'LEnoov' ('<=' without overflow checking) branching.
 var leJumps = [2][2]ssagen.IndexJump{
 	{{Jump: arm64.ABEQ, Index: 0}, {Jump: arm64.ABPL, Index: 1}}, // next == b.Succs[0]
 	{{Jump: arm64.ABMI, Index: 0}, {Jump: arm64.ABEQ, Index: 0}}, // next == b.Succs[1]
 }
 
-// To model a 'GTnoov' ('>' without overflow checking) branching
+// To model a 'GTnoov' ('>' without overflow checking) branching.
 var gtJumps = [2][2]ssagen.IndexJump{
 	{{Jump: arm64.ABMI, Index: 1}, {Jump: arm64.ABEQ, Index: 1}}, // next == b.Succs[0]
 	{{Jump: arm64.ABEQ, Index: 1}, {Jump: arm64.ABPL, Index: 0}}, // next == b.Succs[1]

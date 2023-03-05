@@ -8,7 +8,6 @@ package exec
 
 import (
 	"errors"
-	"internal/godebug"
 	"internal/syscall/unix"
 	"io/fs"
 	"os"
@@ -70,8 +69,11 @@ func LookPath(file string) (string, error) {
 		}
 		path := filepath.Join(dir, file)
 		if err := findExecutable(path); err == nil {
-			if !filepath.IsAbs(path) && godebug.Get("execerrdot") != "0" {
-				return path, &Error{file, ErrDot}
+			if !filepath.IsAbs(path) {
+				if execerrdot.Value() != "0" {
+					return path, &Error{file, ErrDot}
+				}
+				execerrdot.IncNonDefault()
 			}
 			return path, nil
 		}

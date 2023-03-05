@@ -8,6 +8,7 @@
 package fuzz
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -20,7 +21,6 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -775,8 +775,7 @@ func (c *coordinator) peekInput() (fuzzInput, bool) {
 		warmup:  c.warmupRun(),
 	}
 	if c.coverageMask != nil {
-		input.coverageData = make([]byte, len(c.coverageMask))
-		copy(input.coverageData, c.coverageMask)
+		input.coverageData = bytes.Clone(c.coverageMask)
 	}
 	if input.warmup {
 		// No fuzzing will occur, but it should count toward the limit set by
@@ -1032,7 +1031,7 @@ func CheckCorpus(vals []any, types []reflect.Type) error {
 // writeToCorpus will not rewrite it. writeToCorpus sets entry.Path to the new
 // file that was just written or an error if it failed.
 func writeToCorpus(entry *CorpusEntry, dir string) (err error) {
-	sum := fmt.Sprintf("%x", sha256.Sum256(entry.Data))
+	sum := fmt.Sprintf("%x", sha256.Sum256(entry.Data))[:16]
 	entry.Path = filepath.Join(dir, sum)
 	if err := os.MkdirAll(dir, 0777); err != nil {
 		return err
@@ -1077,14 +1076,8 @@ var zeroVals []any = []any{
 	uint64(0),
 }
 
-var (
-	debugInfo     bool
-	debugInfoOnce sync.Once
-)
+var debugInfo = godebug.New("fuzzdebug").Value() == "1"
 
 func shouldPrintDebugInfo() bool {
-	debugInfoOnce.Do(func() {
-		debugInfo = godebug.Get("fuzzdebug") == "1"
-	})
 	return debugInfo
 }

@@ -204,6 +204,17 @@ func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max in
 				case funcID_systemstack:
 					// systemstack returns normally, so just follow the
 					// stack transition.
+					if usesLR && funcspdelta(f, frame.pc, &cache) == 0 {
+						// We're at the function prologue and the stack
+						// switch hasn't happened, or epilogue where we're
+						// about to return. Just unwind normally.
+						// Do this only on LR machines because on x86
+						// systemstack doesn't have an SP delta (the CALL
+						// instruction opens the frame), therefore no way
+						// to check.
+						flag &^= funcFlag_SPWRITE
+						break
+					}
 					gp = gp.m.curg
 					frame.sp = gp.sched.sp
 					stack = gp.stack
@@ -429,6 +440,7 @@ func gentraceback(pc0, sp0, lr0 uintptr, gp *g, skip int, pcbuf *uintptr, max in
 					// inlined function.
 					inlFunc.nameOff = inltree[ix].nameOff
 					inlFunc.funcID = inltree[ix].funcID
+					inlFunc.startLine = inltree[ix].startLine
 
 					if (flags&_TraceRuntimeFrames) != 0 || showframe(inlFuncInfo, gp, nprint == 0, inlFuncInfo.funcID, lastFuncID) {
 						name := funcname(inlFuncInfo)
@@ -711,12 +723,16 @@ func printcreatedby(gp *g) {
 	pc := gp.gopc
 	f := findfunc(pc)
 	if f.valid() && showframe(f, gp, false, funcID_normal, funcID_normal) && gp.goid != 1 {
-		printcreatedby1(f, pc)
+		printcreatedby1(f, pc, gp.parentGoid)
 	}
 }
 
-func printcreatedby1(f funcInfo, pc uintptr) {
-	print("created by ", funcname(f), "\n")
+func printcreatedby1(f funcInfo, pc uintptr, goid uint64) {
+	print("created by ", funcname(f))
+	if goid != 0 {
+		print(" in goroutine ", goid)
+	}
+	print("\n")
 	tracepc := pc // back up to CALL instruction for funcline.
 	if pc > f.entry() {
 		tracepc -= sys.PCQuantum
@@ -816,11 +832,13 @@ func printAncestorTraceback(ancestor ancestorInfo) {
 	// Show what created goroutine, except main goroutine (goid 1).
 	f := findfunc(ancestor.gopc)
 	if f.valid() && showfuncinfo(f, false, funcID_normal, funcID_normal) && ancestor.goid != 1 {
-		printcreatedby1(f, ancestor.gopc)
+		// In ancestor mode, we'll already print the goroutine ancestor.
+		// Pass 0 for the goid parameter so we don't print it again.
+		printcreatedby1(f, ancestor.gopc, 0)
 	}
 }
 
-// printAncestorTraceback prints the given function info at a given pc
+// printAncestorTracebackFuncInfo prints the given function info at a given pc
 // within an ancestor traceback. The precision of this info is reduced
 // due to only have access to the pcs at the time of the caller
 // goroutine being created.
@@ -1292,7 +1310,7 @@ type cgoSymbolizerArg struct {
 	data     uintptr
 }
 
-// cgoTraceback prints a traceback of callers.
+// printCgoTraceback prints a traceback of callers.
 func printCgoTraceback(callers *cgoCallers) {
 	if cgoSymbolizer == nil {
 		for _, c := range callers {

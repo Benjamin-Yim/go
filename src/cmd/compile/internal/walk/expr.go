@@ -279,6 +279,10 @@ func walkExpr1(n ir.Node, init *ir.Nodes) ir.Node {
 	case ir.OCOPY:
 		return walkCopy(n.(*ir.BinaryExpr), init, base.Flag.Cfg.Instrumenting && !base.Flag.CompilingRuntime)
 
+	case ir.OCLEAR:
+		n := n.(*ir.UnaryExpr)
+		return walkClear(n)
+
 	case ir.OCLOSE:
 		n := n.(*ir.UnaryExpr)
 		return walkClose(n, init)
@@ -346,7 +350,7 @@ func walkExpr1(n ir.Node, init *ir.Nodes) ir.Node {
 // expression or simple statement.
 // the types expressions are calculated.
 // compile-time constants are evaluated.
-// complex side effects like statements are appended to init
+// complex side effects like statements are appended to init.
 func walkExprList(s []ir.Node, init *ir.Nodes) {
 	for i := range s {
 		s[i] = walkExpr(s[i], init)
@@ -712,7 +716,7 @@ func walkDotType(n *ir.TypeAssertExpr, init *ir.Nodes) ir.Node {
 	return n
 }
 
-// walkDynamicdotType walks an ODYNAMICDOTTYPE or ODYNAMICDOTTYPE2 node.
+// walkDynamicDotType walks an ODYNAMICDOTTYPE or ODYNAMICDOTTYPE2 node.
 func walkDynamicDotType(n *ir.DynamicTypeAssertExpr, init *ir.Nodes) ir.Node {
 	n.X = walkExpr(n.X, init)
 	n.RType = walkExpr(n.RType, init)
@@ -867,7 +871,7 @@ func walkStringHeader(n *ir.StringHeaderExpr, init *ir.Nodes) ir.Node {
 	return n
 }
 
-// return 1 if integer n must be in range [0, max), 0 otherwise
+// return 1 if integer n must be in range [0, max), 0 otherwise.
 func bounded(n ir.Node, max int64) bool {
 	if n.Type() == nil || !n.Type().IsInteger() {
 		return false

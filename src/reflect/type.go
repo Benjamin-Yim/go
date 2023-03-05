@@ -16,8 +16,8 @@
 package reflect
 
 import (
+	"internal/abi"
 	"internal/goarch"
-	"internal/unsafeheader"
 	"strconv"
 	"sync"
 	"unicode"
@@ -525,27 +525,21 @@ func writeVarint(buf []byte, n int) int {
 	}
 }
 
-func (n name) name() (s string) {
+func (n name) name() string {
 	if n.bytes == nil {
-		return
+		return ""
 	}
 	i, l := n.readVarint(1)
-	hdr := (*unsafeheader.String)(unsafe.Pointer(&s))
-	hdr.Data = unsafe.Pointer(n.data(1+i, "non-empty string"))
-	hdr.Len = l
-	return
+	return unsafe.String(n.data(1+i, "non-empty string"), l)
 }
 
-func (n name) tag() (s string) {
+func (n name) tag() string {
 	if !n.hasTag() {
 		return ""
 	}
 	i, l := n.readVarint(1)
 	i2, l2 := n.readVarint(1 + i + l)
-	hdr := (*unsafeheader.String)(unsafe.Pointer(&s))
-	hdr.Data = unsafe.Pointer(n.data(1+i+l+i2, "non-empty string"))
-	hdr.Len = l2
-	return
+	return unsafe.String(n.data(1+i+l+i2, "non-empty string"), l2)
 }
 
 func (n name) pkgPath() string {
@@ -1999,31 +1993,32 @@ func MapOf(key, elem Type) Type {
 	return ti.(Type)
 }
 
-// TODO(crawshaw): as these funcTypeFixedN structs have no methods,
-// they could be defined at runtime using the StructOf function.
-type funcTypeFixed4 struct {
-	funcType
-	args [4]*rtype
-}
-type funcTypeFixed8 struct {
-	funcType
-	args [8]*rtype
-}
-type funcTypeFixed16 struct {
-	funcType
-	args [16]*rtype
-}
-type funcTypeFixed32 struct {
-	funcType
-	args [32]*rtype
-}
-type funcTypeFixed64 struct {
-	funcType
-	args [64]*rtype
-}
-type funcTypeFixed128 struct {
-	funcType
-	args [128]*rtype
+var funcTypes []Type
+var funcTypesMutex sync.Mutex
+
+func initFuncTypes(n int) Type {
+	funcTypesMutex.Lock()
+	defer funcTypesMutex.Unlock()
+	if n >= len(funcTypes) {
+		newFuncTypes := make([]Type, n+1)
+		copy(newFuncTypes, funcTypes)
+		funcTypes = newFuncTypes
+	}
+	if funcTypes[n] != nil {
+		return funcTypes[n]
+	}
+
+	funcTypes[n] = StructOf([]StructField{
+		{
+			Name: "FuncType",
+			Type: TypeOf(funcType{}),
+		},
+		{
+			Name: "Args",
+			Type: ArrayOf(n, TypeOf(&rtype{})),
+		},
+	})
+	return funcTypes[n]
 }
 
 // FuncOf returns the function type with the given argument and result types.
@@ -2043,36 +2038,13 @@ func FuncOf(in, out []Type, variadic bool) Type {
 	prototype := *(**funcType)(unsafe.Pointer(&ifunc))
 	n := len(in) + len(out)
 
-	var ft *funcType
-	var args []*rtype
-	switch {
-	case n <= 4:
-		fixed := new(funcTypeFixed4)
-		args = fixed.args[:0:len(fixed.args)]
-		ft = &fixed.funcType
-	case n <= 8:
-		fixed := new(funcTypeFixed8)
-		args = fixed.args[:0:len(fixed.args)]
-		ft = &fixed.funcType
-	case n <= 16:
-		fixed := new(funcTypeFixed16)
-		args = fixed.args[:0:len(fixed.args)]
-		ft = &fixed.funcType
-	case n <= 32:
-		fixed := new(funcTypeFixed32)
-		args = fixed.args[:0:len(fixed.args)]
-		ft = &fixed.funcType
-	case n <= 64:
-		fixed := new(funcTypeFixed64)
-		args = fixed.args[:0:len(fixed.args)]
-		ft = &fixed.funcType
-	case n <= 128:
-		fixed := new(funcTypeFixed128)
-		args = fixed.args[:0:len(fixed.args)]
-		ft = &fixed.funcType
-	default:
+	if n > 128 {
 		panic("reflect.FuncOf: too many arguments")
 	}
+
+	o := New(initFuncTypes(n)).Elem()
+	ft := (*funcType)(unsafe.Pointer(o.Field(0).Addr().Pointer()))
+	args := unsafe.Slice((**rtype)(unsafe.Pointer(o.Field(1).Addr().Pointer())), n)[0:0:n]
 	*ft = *prototype
 
 	// Build a hash and minimally populate ft.
@@ -2255,9 +2227,9 @@ func hashMightPanic(t *rtype) bool {
 // Currently, that's just size and the GC program. We also fill in string
 // for possible debugging use.
 const (
-	bucketSize uintptr = 8
-	maxKeySize uintptr = 128
-	maxValSize uintptr = 128
+	bucketSize uintptr = abi.MapBucketCount
+	maxKeySize uintptr = abi.MapMaxKeyBytes
+	maxValSize uintptr = abi.MapMaxElemBytes
 )
 
 func bucketOf(ktyp, etyp *rtype) *rtype {

@@ -5,8 +5,7 @@
 // Only run where builders (build.golang.org) have
 // access to compiled packages for import.
 //
-//go:build !arm && !arm64
-// +build !arm,!arm64
+//go:build !android && !ios && !js
 
 package types2_test
 
@@ -49,11 +48,7 @@ const Boiling Celsius = 100
 func Unused() { {}; {{ var x int; _ = x }} } // make sure empty block scopes get printed
 `},
 	} {
-		f, err := parseSrc(file.name, file.input)
-		if err != nil {
-			log.Fatal(err)
-		}
-		files = append(files, f)
+		files = append(files, mustParse(file.name, file.input))
 	}
 
 	// Type-check a package consisting of these files.
@@ -124,11 +119,6 @@ func fib(x int) int {
 	}
 	return fib(x-1) - fib(x-2)
 }`
-	f, err := parseSrc("fib.go", input)
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	// Type-check the package.
 	// We create an empty map for each kind of input
 	// we're interested in, and Check populates them.
@@ -137,11 +127,7 @@ func fib(x int) int {
 		Defs:  make(map[*syntax.Name]types2.Object),
 		Uses:  make(map[*syntax.Name]types2.Object),
 	}
-	var conf types2.Config
-	pkg, err := conf.Check("fib", []*syntax.File{f}, &info)
-	if err != nil {
-		log.Fatal(err)
-	}
+	pkg := mustTypecheck("fib.go", input, nil, &info)
 
 	// Print package-level variables in initialization order.
 	fmt.Printf("InitOrder: %v\n\n", info.InitOrder)

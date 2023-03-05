@@ -22,6 +22,7 @@ import (
 	"cmd/link/internal/loader"
 	"cmd/link/internal/sym"
 	"fmt"
+	"internal/abi"
 	"internal/buildcfg"
 	"log"
 	"path"
@@ -539,6 +540,9 @@ func (d *dwctxt) newtype(gotype loader.Sym) *dwarf.DWDie {
 	sn := d.ldr.SymName(gotype)
 	name := sn[5:] // could also decode from Type.string
 	tdata := d.ldr.Data(gotype)
+	if len(tdata) == 0 {
+		d.linkctxt.Errorf(gotype, "missing type")
+	}
 	kind := decodetypeKind(d.arch, tdata)
 	bytesize := decodetypeSize(d.arch, tdata)
 
@@ -852,9 +856,9 @@ func mkinternaltypename(base string, arg1 string, arg2 string) string {
 
 // synthesizemaptypes is way too closely married to runtime/hashmap.c
 const (
-	MaxKeySize = 128
-	MaxValSize = 128
-	BucketSize = 8
+	MaxKeySize = abi.MapMaxKeyBytes
+	MaxValSize = abi.MapMaxElemBytes
+	BucketSize = abi.MapBucketCount
 )
 
 func (d *dwctxt) mkinternaltype(ctxt *Link, abbrev int, typename, keyname, valname string, f func(*dwarf.DWDie)) loader.Sym {

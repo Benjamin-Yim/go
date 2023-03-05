@@ -217,7 +217,7 @@ func (p *parser) posAt(line, col uint) Pos {
 	return MakePos(p.base, line, col)
 }
 
-// error reports an error at the given position.
+// errorAt reports an error at the given position.
 func (p *parser) errorAt(pos Pos, msg string) {
 	err := Error{pos, msg}
 	if p.first == nil {
@@ -314,7 +314,7 @@ const stopset uint64 = 1<<_Break |
 	1<<_Type |
 	1<<_Var
 
-// Advance consumes tokens until it finds a token of the stopset or followlist.
+// advance consumes tokens until it finds a token of the stopset or followlist.
 // The stopset is only considered if we are inside a function (p.fnest > 0).
 // The followlist is the list of valid tokens that can follow a production;
 // if it is empty, exactly one (non-EOF) token is consumed to ensure progress.
@@ -767,7 +767,9 @@ func (p *parser) funcDeclOrNil() *FuncDecl {
 	f.pos = p.pos()
 	f.Pragma = p.takePragma()
 
+	var context string
 	if p.got(_Lparen) {
+		context = "method"
 		rcvr := p.paramList(nil, nil, _Rparen, false)
 		switch len(rcvr) {
 		case 0:
@@ -780,19 +782,17 @@ func (p *parser) funcDeclOrNil() *FuncDecl {
 		}
 	}
 
-	if p.tok != _Name {
-		p.syntaxError("expected name or (")
+	if p.tok == _Name {
+		f.Name = p.name()
+		f.TParamList, f.Type = p.funcType(context)
+	} else {
+		msg := "expected name or ("
+		if context != "" {
+			msg = "expected name"
+		}
+		p.syntaxError(msg)
 		p.advance(_Lbrace, _Semi)
-		return nil
 	}
-
-	f.Name = p.name()
-
-	context := ""
-	if f.Recv != nil {
-		context = "method" // don't permit (method) type parameters in funcType
-	}
-	f.TParamList, f.Type = p.funcType(context)
 
 	if p.tok == _Lbrace {
 		f.Body = p.funcBody()

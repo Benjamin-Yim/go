@@ -193,8 +193,7 @@ var gcphase uint32
 var writeBarrier struct {
 	enabled bool    // compiler emits a check of this before calling write barrier
 	pad     [3]byte // compiler uses 32-bit load for "enabled" field
-	needed  bool    // whether we need a write barrier for current GC phase
-	cgo     bool    // whether we need a write barrier for a cgo check
+	needed  bool    // identical to enabled, for now (TODO: dedup)
 	alignme uint64  // guarantee alignment so that compiler can use a 32 or 64-bit load
 }
 
@@ -213,7 +212,7 @@ const (
 func setGCPhase(x uint32) {
 	atomic.Store(&gcphase, x)
 	writeBarrier.needed = gcphase == _GCmark || gcphase == _GCmarktermination
-	writeBarrier.enabled = writeBarrier.needed || writeBarrier.cgo
+	writeBarrier.enabled = writeBarrier.needed
 }
 
 // gcMarkWorkerMode represents the mode that a concurrent mark worker
@@ -879,7 +878,7 @@ top:
 	if restart {
 		getg().m.preemptoff = ""
 		systemstack(func() {
-			now := startTheWorldWithSema(true)
+			now := startTheWorldWithSema(trace.enabled)
 			work.pauseNS += now - work.pauseStart
 			memstats.gcPauseDist.record(now - work.pauseStart)
 		})
@@ -1087,7 +1086,7 @@ func gcMarkTermination() {
 		throw("failed to set sweep barrier")
 	}
 
-	systemstack(func() { startTheWorldWithSema(true) })
+	systemstack(func() { startTheWorldWithSema(trace.enabled) })
 
 	// Flush the heap profile so we can start a new cycle next GC.
 	// This is relatively expensive, so we don't do it with the
@@ -1162,6 +1161,15 @@ func gcMarkTermination() {
 		printunlock()
 	}
 
+	// Set any arena chunks that were deferred to fault.
+	lock(&userArenaState.lock)
+	faultList := userArenaState.fault
+	userArenaState.fault = nil
+	unlock(&userArenaState.lock)
+	for _, lc := range faultList {
+		lc.mspan.setUserArenaChunkToFault()
+	}
+
 	semrelease(&worldsema)
 	semrelease(&gcsema)
 	// Careful: another GC cycle may start now.
@@ -1214,7 +1222,7 @@ func gcBgMarkPrepare() {
 	work.nwait = ^uint32(0)
 }
 
-// gcBgMarkWorker is an entry in the gcBgMarkWorkerPool. It points to a single
+// gcBgMarkWorkerNode is an entry in the gcBgMarkWorkerPool. It points to a single
 // gcBgMarkWorker goroutine.
 type gcBgMarkWorkerNode struct {
 	// Unused workers are managed in a lock-free stack. This field must be first.
@@ -1439,9 +1447,6 @@ func gcMark(startTime int64) {
 		// This is expensive when there's a large number of
 		// Gs, so only do it if checkmark is also enabled.
 		gcMarkRootCheck()
-	}
-	if work.full != 0 {
-		throw("work.full != 0")
 	}
 
 	// Drop allg snapshot. allgs may have grown, in which case

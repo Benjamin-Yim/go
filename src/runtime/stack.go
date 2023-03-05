@@ -98,6 +98,7 @@ const (
 	// The guard leaves enough room for one _StackSmall frame plus
 	// a _StackLimit chain of NOSPLIT calls plus _StackSystem
 	// bytes for the OS.
+	// This arithmetic must match that in cmd/internal/objabi/stack.go:StackLimit.
 	_StackGuard = 928*sys.StackGuardMultiplier + _StackSystem
 
 	// After a stack split check the SP is allowed to be this
@@ -107,6 +108,7 @@ const (
 
 	// The maximum number of bytes that a chain of NOSPLIT
 	// functions can use.
+	// This arithmetic must match that in cmd/internal/objabi/stack.go:StackLimit.
 	_StackLimit = _StackGuard - _StackSystem - _StackSmall
 )
 
@@ -626,11 +628,10 @@ type adjustinfo struct {
 	sghi uintptr
 }
 
-// adjustpointer 检查*vpp是否在adjinfo所描述的旧栈中。
+// adjustpointer checks whether *vpp is in the old stack described by adjinfo. 检查*vpp是否在adjinfo所描述的旧栈中。
 //
 //	如果是，它就重写*vpp以指向新的堆栈。 也就是调整指针指向的位置
 //
-// Adjustpointer checks whether *vpp is in the old stack described by adjinfo.
 // If so, it rewrites *vpp to point into the new stack.
 func adjustpointer(adjinfo *adjustinfo, vpp unsafe.Pointer) {
 	pp := (*uintptr)(vpp)
@@ -690,7 +691,7 @@ func adjustpointers(scanp unsafe.Pointer, bv *bitvector, adjinfo *adjustinfo, f 
 		// b 指向第几个变量的相对位置
 		b := *(addb(bv.bytedata, i/8))
 		for b != 0 {
-			j := uintptr(sys.Ctz8(b))
+			j := uintptr(sys.TrailingZeros8(b))
 			b &= b - 1
 			// 获取到其栈值的准确地址，指针将获取其指向的地址，如果是常量，则获取本身的地址
 			pp := (*uintptr)(add(scanp, (i+j)*goarch.PtrSize))

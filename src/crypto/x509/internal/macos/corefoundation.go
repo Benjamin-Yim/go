@@ -10,6 +10,7 @@
 package macOS
 
 import (
+	"bytes"
 	"errors"
 	"internal/abi"
 	"runtime"
@@ -30,10 +31,8 @@ type CFRef uintptr
 func CFDataToSlice(data CFRef) []byte {
 	length := CFDataGetLength(data)
 	ptr := CFDataGetBytePtr(data)
-	src := (*[1 << 20]byte)(unsafe.Pointer(ptr))[:length:length]
-	out := make([]byte, length)
-	copy(out, src)
-	return out
+	src := unsafe.Slice((*byte)(unsafe.Pointer(ptr)), length)
+	return bytes.Clone(src)
 }
 
 // CFStringToString returns a Go string representation of the passed
@@ -48,7 +47,7 @@ func CFStringToString(ref CFRef) string {
 	return string(b)
 }
 
-// TimeToCFDateRef converts a time.Time into an apple CFDateRef
+// TimeToCFDateRef converts a time.Time into an apple CFDateRef.
 func TimeToCFDateRef(t time.Time) CFRef {
 	secs := t.Sub(time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)).Seconds()
 	ref := CFDateCreate(secs)
@@ -186,6 +185,13 @@ func CFErrorCopyDescription(errRef CFRef) CFRef {
 	return CFRef(ret)
 }
 func x509_CFErrorCopyDescription_trampoline()
+
+//go:cgo_import_dynamic x509_CFErrorGetCode CFErrorGetCode "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
+
+func CFErrorGetCode(errRef CFRef) int {
+	return int(syscall(abi.FuncPCABI0(x509_CFErrorGetCode_trampoline), uintptr(errRef), 0, 0, 0, 0, 0))
+}
+func x509_CFErrorGetCode_trampoline()
 
 //go:cgo_import_dynamic x509_CFStringCreateExternalRepresentation CFStringCreateExternalRepresentation "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
 

@@ -44,27 +44,22 @@ func vcsErrorf(format string, a ...any) error {
 	return &VCSError{Err: fmt.Errorf(format, a...)}
 }
 
-func NewRepo(vcs, remote string) (Repo, error) {
-	type key struct {
-		vcs    string
-		remote string
-	}
-	type cached struct {
-		repo Repo
-		err  error
-	}
-	c := vcsRepoCache.Do(key{vcs, remote}, func() any {
-		repo, err := newVCSRepo(vcs, remote)
-		if err != nil {
-			err = &VCSError{err}
-		}
-		return cached{repo, err}
-	}).(cached)
-
-	return c.repo, c.err
+type vcsCacheKey struct {
+	vcs    string
+	remote string
 }
 
-var vcsRepoCache par.Cache
+func NewRepo(vcs, remote string) (Repo, error) {
+	return vcsRepoCache.Do(vcsCacheKey{vcs, remote}, func() (Repo, error) {
+		repo, err := newVCSRepo(vcs, remote)
+		if err != nil {
+			return nil, &VCSError{err}
+		}
+		return repo, nil
+	})
+}
+
+var vcsRepoCache par.ErrCache[vcsCacheKey, Repo]
 
 type vcsRepo struct {
 	mu lockedfile.Mutex // protects all commands, so we don't have to decide which are safe on a per-VCS basis
@@ -539,12 +534,12 @@ func bzrParseStat(rev, out string) (*RevInfo, error) {
 		if line[0] == '-' {
 			continue
 		}
-		i := strings.Index(line, ":")
-		if i < 0 {
+		before, after, found := strings.Cut(line, ":")
+		if !found {
 			// End of header, start of commit message.
 			break
 		}
-		key, val := line[:i], strings.TrimSpace(line[i+1:])
+		key, val := before, strings.TrimSpace(after)
 		switch key {
 		case "revno":
 			if j := strings.Index(val, " "); j >= 0 {
@@ -587,7 +582,7 @@ func fossilParseStat(rev, out string) (*RevInfo, error) {
 			if len(f) != 5 || len(f[1]) != 40 || f[4] != "UTC" {
 				return nil, vcsErrorf("unexpected response from fossil info: %q", line)
 			}
-			t, err := time.Parse("2006-01-02 15:04:05", f[2]+" "+f[3])
+			t, err := time.Parse(time.DateTime, f[2]+" "+f[3])
 			if err != nil {
 				return nil, vcsErrorf("unexpected response from fossil info: %q", line)
 			}

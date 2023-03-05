@@ -7,6 +7,7 @@
 package runtime
 
 import (
+	"runtime/internal/atomic"
 	"unsafe"
 )
 
@@ -25,6 +26,7 @@ func open(name *byte, mode, perm int32) int32        { panic("not implemented") 
 func closefd(fd int32) int32                         { panic("not implemented") }
 func read(fd int32, p unsafe.Pointer, n int32) int32 { panic("not implemented") }
 
+//go:wasmimport gojs runtime.wasmWrite
 //go:noescape
 func wasmWrite(fd uintptr, p unsafe.Pointer, n int32)
 
@@ -35,7 +37,7 @@ func usleep_no_g(usec uint32) {
 	usleep(usec)
 }
 
-func exitThread(wait *uint32)
+func exitThread(wait *atomic.Uint32)
 
 type mOS struct{}
 
@@ -116,6 +118,7 @@ func crash() {
 	*(*int32)(nil) = 0
 }
 
+//go:wasmimport gojs runtime.getRandomData
 func getRandomData(r []byte)
 
 func goenvs() {

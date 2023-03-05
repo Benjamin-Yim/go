@@ -51,9 +51,9 @@ It is a comma-separated list of name=val pairs setting these named variables:
 	cgocheck: setting cgocheck=0 disables all checks for packages
 	using cgo to incorrectly pass Go pointers to non-Go code.
 	Setting cgocheck=1 (the default) enables relatively cheap
-	checks that may miss some errors.  Setting cgocheck=2 enables
-	expensive checks that should not miss any errors, but will
-	cause your program to run slower.
+	checks that may miss some errors. A more complete, but slow,
+	cgocheck mode can be enabled using GOEXPERIMENT (which
+	requires a rebuild), see https://pkg.go.dev/internal/goexperiment for details.
 
 	efence: setting efence=1 causes the allocator to run in a mode
 	where each object is allocated on a unique page and addresses are
@@ -126,6 +126,13 @@ It is a comma-separated list of name=val pairs setting these named variables:
 	memprofilerate: setting memprofilerate=X will update the value of runtime.MemProfileRate.
 	When set to 0 memory profiling is disabled.  Refer to the description of
 	MemProfileRate for the default value.
+
+	pagetrace: setting pagetrace=/path/to/file will write out a trace of page events
+	that can be viewed, analyzed, and visualized using the x/debug/cmd/pagetrace tool.
+	Build your program with GOEXPERIMENT=pagetrace to enable this functionality. Do not
+	enable this functionality if your program is a setuid binary as it introduces a security
+	risk in that scenario. Currently not supported on Windows, plan9 or js/wasm. Setting this
+	option for some applications can produce large traces, so use with care.
 
 	invalidptr: invalidptr=1 (the default) causes the garbage collector and stack
 	copier to crash the program if an invalid pointer value (for example, 1)

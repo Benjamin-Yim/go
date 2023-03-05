@@ -33,10 +33,9 @@ var sweep sweepdata
 
 // State of background sweep.
 type sweepdata struct {
-	lock    mutex
-	g       *g
-	parked  bool
-	started bool
+	lock   mutex
+	g      *g
+	parked bool
 
 	nbgsweep    uint32
 	npausesweep uint32
@@ -485,7 +484,7 @@ func (s *mspan) ensureSwept() {
 	}
 }
 
-// Sweep frees or collects finalizers for blocks not marked in the mark phase.
+// sweep frees or collects finalizers for blocks not marked in the mark phase.
 // It clears the mark bits in preparation for the next GC round.
 // Returns true if the span was returned to heap.
 // If preserve=true, don't return it to heap nor relink in mcentral lists;
@@ -602,13 +601,14 @@ func (sl *sweepLocked) sweep(preserve bool) bool {
 				if debug.clobberfree != 0 {
 					clobberfree(unsafe.Pointer(x), size)
 				}
-				if raceenabled {
+				// User arenas are handled on explicit free.
+				if raceenabled && !s.isUserArenaChunk {
 					racefree(unsafe.Pointer(x), size)
 				}
-				if msanenabled {
+				if msanenabled && !s.isUserArenaChunk {
 					msanfree(unsafe.Pointer(x), size)
 				}
-				if asanenabled {
+				if asanenabled && !s.isUserArenaChunk {
 					asanpoison(unsafe.Pointer(x), size)
 				}
 			}
@@ -648,6 +648,7 @@ func (sl *sweepLocked) sweep(preserve bool) bool {
 
 	s.allocCount = nalloc
 	s.freeindex = 0 // reset allocation index to start of span.
+	s.freeIndexForScan = 0
 	if trace.enabled {
 		getg().m.p.ptr().traceReclaimed += uintptr(nfreed) * s.elemsize
 	}
@@ -681,6 +682,41 @@ func (sl *sweepLocked) sweep(preserve bool) bool {
 	// At this point the mark bits are cleared and allocation ready
 	// to go so release the span.
 	atomic.Store(&s.sweepgen, sweepgen)
+
+	if s.isUserArenaChunk {
+		if preserve {
+			// This is a case that should never be handled by a sweeper that
+			// preserves the span for reuse.
+			throw("sweep: tried to preserve a user arena span")
+		}
+		if nalloc > 0 {
+			// There still exist pointers into the span or the span hasn't been
+			// freed yet. It's not ready to be reused. Put it back on the
+			// full swept list for the next cycle.
+			mheap_.central[spc].mcentral.fullSwept(sweepgen).push(s)
+			return false
+		}
+
+		// It's only at this point that the sweeper doesn't actually need to look
+		// at this arena anymore, so subtract from pagesInUse now.
+		mheap_.pagesInUse.Add(-s.npages)
+		s.state.set(mSpanDead)
+
+		// The arena is ready to be recycled. Remove it from the quarantine list
+		// and place it on the ready list. Don't add it back to any sweep lists.
+		systemstack(func() {
+			// It's the arena code's responsibility to get the chunk on the quarantine
+			// list by the time all references to the chunk are gone.
+			if s.list != &mheap_.userArena.quarantineList {
+				throw("user arena span is on the wrong list")
+			}
+			lock(&mheap_.lock)
+			mheap_.userArena.quarantineList.remove(s)
+			mheap_.userArena.readyList.insert(s)
+			unlock(&mheap_.lock)
+		})
+		return false
+	}
 
 	if spc.sizeclass() != 0 {
 		// Handle spans for small objects.
@@ -837,11 +873,30 @@ func deductSweepCredit(spanBytes uintptr, callerSweepPages uintptr) {
 		traceGCSweepStart()
 	}
 
+	// Fix debt if necessary.
 retry:
 	sweptBasis := mheap_.pagesSweptBasis.Load()
-
-	// Fix debt if necessary.
-	newHeapLive := uintptr(gcController.heapLive.Load()-mheap_.sweepHeapLiveBasis) + spanBytes
+	live := gcController.heapLive.Load()
+	liveBasis := mheap_.sweepHeapLiveBasis
+	newHeapLive := spanBytes
+	if liveBasis < live {
+		// Only do this subtraction when we don't overflow. Otherwise, pagesTarget
+		// might be computed as something really huge, causing us to get stuck
+		// sweeping here until the next mark phase.
+		//
+		// Overflow can happen here if gcPaceSweeper is called concurrently with
+		// sweeping (i.e. not during a STW, like it usually is) because this code
+		// is intentionally racy. A concurrent call to gcPaceSweeper can happen
+		// if a GC tuning parameter is modified and we read an older value of
+		// heapLive than what was used to set the basis.
+		//
+		// This state should be transient, so it's fine to just let newHeapLive
+		// be a relatively small number. We'll probably just skip this attempt to
+		// sweep.
+		//
+		// See issue #57523.
+		newHeapLive += uintptr(live - liveBasis)
+	}
 	pagesTarget := int64(mheap_.sweepPagesPerByte*float64(newHeapLive)) - int64(callerSweepPages)
 	for pagesTarget > int64(mheap_.pagesSwept.Load()-sweptBasis) {
 		if sweepone() == ^uintptr(0) {

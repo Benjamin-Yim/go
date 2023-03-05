@@ -9,6 +9,7 @@ import (
 
 	"cmd/compile/internal/base"
 	"cmd/compile/internal/ir"
+	"cmd/compile/internal/syntax"
 	"cmd/compile/internal/typecheck"
 	"cmd/compile/internal/types"
 	"cmd/compile/internal/types2"
@@ -60,9 +61,7 @@ func FixValue(typ *types.Type, val constant.Value) constant.Value {
 	if !typ.IsUntyped() {
 		val = typecheck.DefaultLit(ir.NewBasicLit(src.NoXPos, val), typ).Val()
 	}
-	if !typ.IsTypeParam() {
-		ir.AssertValidTypeForConst(typ, val)
-	}
+	ir.AssertValidTypeForConst(typ, val)
 	return val
 }
 
@@ -210,19 +209,11 @@ var one = constant.MakeInt64(1)
 func IncDec(pos src.XPos, op ir.Op, x ir.Node) *ir.AssignOpStmt {
 	assert(x.Type() != nil)
 	bl := ir.NewBasicLit(pos, one)
-	if x.Type().HasTParam() {
-		// If the operand is generic, then types2 will have proved it must be
-		// a type that fits with increment/decrement, so just set the type of
-		// "one" to n.Type(). This works even for types that are eventually
-		// float or complex.
-		typed(x.Type(), bl)
-	} else {
-		bl = typecheck.DefaultLit(bl, x.Type())
-	}
+	bl = typecheck.DefaultLit(bl, x.Type())
 	return ir.NewAssignOpStmt(pos, op, x, bl)
 }
 
-func idealType(tv types2.TypeAndValue) types2.Type {
+func idealType(tv syntax.TypeAndValue) types2.Type {
 	// The gc backend expects all expressions to have a concrete type, and
 	// types2 mostly satisfies this expectation already. But there are a few
 	// cases where the Go spec doesn't require converting to concrete type,

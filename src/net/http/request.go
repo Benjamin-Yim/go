@@ -49,9 +49,12 @@ type ProtocolError struct {
 func (pe *ProtocolError) Error() string { return pe.ErrorString }
 
 var (
-	// ErrNotSupported is returned by the Push method of Pusher
-	// implementations to indicate that HTTP/2 Push support is not
-	// available.
+	// ErrNotSupported indicates that a feature is not supported.
+	//
+	// It is returned by ResponseController methods to indicate that
+	// the handler does not support the method, and by the Push method
+	// of Pusher implementations to indicate that HTTP/2 Push support
+	// is not available.
 	ErrNotSupported = &ProtocolError{"feature not supported"}
 
 	// Deprecated: ErrUnexpectedTrailer is no longer returned by
@@ -1030,6 +1033,8 @@ func ReadRequest(b *bufio.Reader) (*Request, error) {
 
 func readRequest(b *bufio.Reader) (req *Request, err error) {
 	tp := newTextprotoReader(b)
+	defer putTextprotoReader(tp)
+
 	req = new(Request)
 
 	// First line: GET /index.html HTTP/1.0
@@ -1038,7 +1043,6 @@ func readRequest(b *bufio.Reader) (req *Request, err error) {
 		return nil, err
 	}
 	defer func() {
-		putTextprotoReader(tp)
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
 		}

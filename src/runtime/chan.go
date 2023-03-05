@@ -138,7 +138,7 @@ func full(c *hchan) bool {
 	return c.qcount == c.dataqsiz
 }
 
-// entry point for c <- x from compiled code
+// entry point for c <- x from compiled code.
 //
 //	发送数据到 channel 的实际调用
 //
@@ -454,7 +454,7 @@ func empty(c *hchan) bool {
 	return atomic.Loaduint(&c.qcount) == 0
 }
 
-// entry points for <- c from compiled code
+// entry points for <- c from compiled code.
 // channel接收数据的实际调用
 // chanrecv1函数调用了chanrecv函数
 //

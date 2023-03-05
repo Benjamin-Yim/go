@@ -213,7 +213,7 @@ func (p *parser) next() {
 			// The comment is on same line as the previous token; it
 			// cannot be a lead comment but may be a line comment.
 			comment, endline = p.consumeCommentGroup(0)
-			if p.file.Line(p.pos) != endline || p.tok == token.EOF {
+			if p.file.Line(p.pos) != endline || p.tok == token.SEMICOLON || p.tok == token.EOF {
 				// The next token is on a different line, thus
 				// the last comment group is a line comment.
 				p.lineComment = comment
@@ -313,7 +313,8 @@ func (p *parser) expectClosing(tok token.Token, context string) token.Pos {
 	return p.expect(tok)
 }
 
-func (p *parser) expectSemi() {
+// expectSemi consumes a semicolon and returns the applicable line comment.
+func (p *parser) expectSemi() (comment *ast.CommentGroup) {
 	// semicolon is optional before a closing ')' or '}'
 	if p.tok != token.RPAREN && p.tok != token.RBRACE {
 		switch p.tok {
@@ -322,12 +323,22 @@ func (p *parser) expectSemi() {
 			p.errorExpected(p.pos, "';'")
 			fallthrough
 		case token.SEMICOLON:
-			p.next()
+			if p.lit == ";" {
+				// explicit semicolon
+				p.next()
+				comment = p.lineComment // use following comments
+			} else {
+				// artificial semicolon
+				comment = p.lineComment // use preceding comments
+				p.next()
+			}
+			return comment
 		default:
 			p.errorExpected(p.pos, "';'")
 			p.advance(stmtStart)
 		}
 	}
+	return nil
 }
 
 func (p *parser) atComma(context string, follow token.Token) bool {
@@ -576,15 +587,19 @@ func (p *parser) parseArrayFieldOrTypeInstance(x *ast.Ident) (*ast.Ident, ast.Ex
 		defer un(trace(p, "ArrayFieldOrTypeInstance"))
 	}
 
-	// TODO(gri) Should we allow a trailing comma in a type argument
-	//           list such as T[P,]? (We do in parseTypeInstance).
 	lbrack := p.expect(token.LBRACK)
+	trailingComma := token.NoPos // if valid, the position of a trailing comma preceding the ']'
 	var args []ast.Expr
 	if p.tok != token.RBRACK {
 		p.exprLev++
 		args = append(args, p.parseRhs())
 		for p.tok == token.COMMA {
+			comma := p.pos
 			p.next()
+			if p.tok == token.RBRACK {
+				trailingComma = comma
+				break
+			}
 			args = append(args, p.parseRhs())
 		}
 		p.exprLev--
@@ -602,6 +617,10 @@ func (p *parser) parseArrayFieldOrTypeInstance(x *ast.Ident) (*ast.Ident, ast.Ex
 		elt := p.tryIdentOrType()
 		if elt != nil {
 			// x [P]E
+			if trailingComma.IsValid() {
+				// Trailing commas are invalid in array type fields.
+				p.error(trailingComma, "unexpected comma; expecting ]")
+			}
 			return x, &ast.ArrayType{Lbrack: lbrack, Len: args[0], Elt: elt}
 		}
 	}
@@ -695,9 +714,9 @@ func (p *parser) parseFieldDecl() *ast.Field {
 		p.next()
 	}
 
-	p.expectSemi() // call before accessing p.linecomment
+	comment := p.expectSemi()
 
-	field := &ast.Field{Doc: doc, Names: names, Type: typ, Tag: tag, Comment: p.lineComment}
+	field := &ast.Field{Doc: doc, Names: names, Type: typ, Tag: tag, Comment: comment}
 	return field
 }
 
@@ -1176,19 +1195,16 @@ parseElements:
 			if f.Names == nil {
 				f.Type = p.embeddedElem(f.Type)
 			}
-			p.expectSemi()
-			f.Comment = p.lineComment
+			f.Comment = p.expectSemi()
 			list = append(list, f)
 		case p.tok == token.TILDE:
 			typ := p.embeddedElem(nil)
-			p.expectSemi()
-			comment := p.lineComment
+			comment := p.expectSemi()
 			list = append(list, &ast.Field{Type: typ, Comment: comment})
 		default:
 			if t := p.tryIdentOrType(); t != nil {
 				typ := p.embeddedElem(t)
-				p.expectSemi()
-				comment := p.lineComment
+				comment := p.expectSemi()
 				list = append(list, &ast.Field{Type: typ, Comment: comment})
 			} else {
 				break parseElements
@@ -1299,8 +1315,7 @@ func (p *parser) tryIdentOrType() ast.Expr {
 	case token.MUL:
 		return p.parsePointerType()
 	case token.FUNC:
-		typ := p.parseFuncType()
-		return typ
+		return p.parseFuncType()
 	case token.INTERFACE:
 		return p.parseInterfaceType()
 	case token.MAP:
@@ -1380,7 +1395,7 @@ func (p *parser) parseFuncTypeOrLit() ast.Expr {
 }
 
 // parseOperand may return an expression or a raw type (incl. array
-// types of the form [...]T. Callers must verify the result.
+// types of the form [...]T). Callers must verify the result.
 func (p *parser) parseOperand() ast.Expr {
 	if p.trace {
 		defer un(trace(p, "Operand"))
@@ -2446,14 +2461,14 @@ func (p *parser) parseImportSpec(doc *ast.CommentGroup, _ token.Token, _ int) as
 		p.error(pos, "missing import path")
 		p.advance(exprEnd)
 	}
-	p.expectSemi() // call before accessing p.linecomment
+	comment := p.expectSemi()
 
 	// collect imports
 	spec := &ast.ImportSpec{
 		Doc:     doc,
 		Name:    ident,
 		Path:    &ast.BasicLit{ValuePos: pos, Kind: token.STRING, Value: path},
-		Comment: p.lineComment,
+		Comment: comment,
 	}
 	p.imports = append(p.imports, spec)
 
@@ -2489,14 +2504,14 @@ func (p *parser) parseValueSpec(doc *ast.CommentGroup, keyword token.Token, iota
 	default:
 		panic("unreachable")
 	}
-	p.expectSemi() // call before accessing p.linecomment
+	comment := p.expectSemi()
 
 	spec := &ast.ValueSpec{
 		Doc:     doc,
 		Names:   idents,
 		Type:    typ,
 		Values:  values,
-		Comment: p.lineComment,
+		Comment: comment,
 	}
 	return spec
 }
@@ -2589,8 +2604,7 @@ func (p *parser) parseTypeSpec(doc *ast.CommentGroup, _ token.Token, _ int) ast.
 		spec.Type = p.parseType()
 	}
 
-	p.expectSemi() // call before accessing p.linecomment
-	spec.Comment = p.lineComment
+	spec.Comment = p.expectSemi()
 
 	return spec
 }
@@ -2829,12 +2843,14 @@ func (p *parser) parseFile() *ast.File {
 	}
 
 	f := &ast.File{
-		Doc:      doc,
-		Package:  pos,
-		Name:     ident,
-		Decls:    decls,
-		Imports:  p.imports,
-		Comments: p.comments,
+		Doc:       doc,
+		Package:   pos,
+		Name:      ident,
+		Decls:     decls,
+		FileStart: token.Pos(p.file.Base()),
+		FileEnd:   token.Pos(p.file.Base() + p.file.Size()),
+		Imports:   p.imports,
+		Comments:  p.comments,
 	}
 	var declErr func(token.Pos, string)
 	if p.mode&DeclarationErrors != 0 {

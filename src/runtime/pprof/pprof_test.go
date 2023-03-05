@@ -333,6 +333,23 @@ func inlinedCalleeDump(pcs []uintptr) {
 	dumpCallers(pcs)
 }
 
+type inlineWrapperInterface interface {
+	dump(stack []uintptr)
+}
+
+type inlineWrapper struct {
+}
+
+func (h inlineWrapper) dump(pcs []uintptr) {
+	dumpCallers(pcs)
+}
+
+func inlinedWrapperCallerDump(pcs []uintptr) {
+	var h inlineWrapperInterface
+	h = &inlineWrapper{}
+	h.dump(pcs)
+}
+
 func TestCPUProfileRecursion(t *testing.T) {
 	matches := matchAndAvoidStacks(stackContains, []string{"runtime/pprof.inlinedCallee", "runtime/pprof.recursionCallee", "runtime/pprof.recursionCaller"}, avoidFunctions())
 	p := testCPUProfile(t, matches, func(dur time.Duration) {
@@ -607,7 +624,7 @@ func matchAndAvoidStacks(matches sampleMatchFunc, need []string, avoid []string)
 		var total uintptr
 		for i, name := range need {
 			total += have[i]
-			t.Logf("%s: %d\n", name, have[i])
+			t.Logf("found %d samples in expected function %s\n", have[i], name)
 		}
 		if total == 0 {
 			t.Logf("no samples in expected functions")
@@ -727,6 +744,9 @@ func TestGoroutineSwitch(t *testing.T) {
 }
 
 func fprintStack(w io.Writer, stk []*profile.Location) {
+	if len(stk) == 0 {
+		fmt.Fprintf(w, " (stack empty)")
+	}
 	for _, loc := range stk {
 		fmt.Fprintf(w, " %#x", loc.Address)
 		fmt.Fprintf(w, " (")
@@ -1244,6 +1264,50 @@ func TestMutexProfile(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestMutexProfileRateAdjust(t *testing.T) {
+	old := runtime.SetMutexProfileFraction(1)
+	defer runtime.SetMutexProfileFraction(old)
+	if old != 0 {
+		t.Fatalf("need MutexProfileRate 0, got %d", old)
+	}
+
+	readProfile := func() (contentions int64, delay int64) {
+		var w bytes.Buffer
+		Lookup("mutex").WriteTo(&w, 0)
+		p, err := profile.Parse(&w)
+		if err != nil {
+			t.Fatalf("failed to parse profile: %v", err)
+		}
+		t.Logf("parsed proto: %s", p)
+		if err := p.CheckValid(); err != nil {
+			t.Fatalf("invalid profile: %v", err)
+		}
+
+		for _, s := range p.Sample {
+			for _, l := range s.Location {
+				for _, line := range l.Line {
+					if line.Function.Name == "runtime/pprof.blockMutex.func1" {
+						contentions += s.Value[0]
+						delay += s.Value[1]
+					}
+				}
+			}
+		}
+		return
+	}
+
+	blockMutex(t)
+	contentions, delay := readProfile()
+	if contentions == 0 || delay == 0 {
+		t.Fatal("did not see expected function in profile")
+	}
+	runtime.SetMutexProfileFraction(0)
+	newContentions, newDelay := readProfile()
+	if newContentions != contentions || newDelay != delay {
+		t.Fatalf("sample value changed: got [%d, %d], want [%d, %d]", newContentions, newDelay, contentions, delay)
+	}
 }
 
 func func1(c chan int) { <-c }
@@ -1823,14 +1887,14 @@ func TestLabelSystemstack(t *testing.T) {
 		isLabeled := s.Label != nil && contains(s.Label["key"], "value")
 		var (
 			mayBeLabeled     bool
-			mustBeLabeled    bool
-			mustNotBeLabeled bool
+			mustBeLabeled    string
+			mustNotBeLabeled string
 		)
 		for _, loc := range s.Location {
 			for _, l := range loc.Line {
 				switch l.Function.Name {
 				case "runtime/pprof.labelHog", "runtime/pprof.parallelLabelHog", "runtime/pprof.parallelLabelHog.func1":
-					mustBeLabeled = true
+					mustBeLabeled = l.Function.Name
 				case "runtime/pprof.Do":
 					// Do sets the labels, so samples may
 					// or may not be labeled depending on
@@ -1842,7 +1906,7 @@ func TestLabelSystemstack(t *testing.T) {
 					// (such as those identified by
 					// runtime.isSystemGoroutine). These
 					// should never be labeled.
-					mustNotBeLabeled = true
+					mustNotBeLabeled = l.Function.Name
 				case "gogo", "gosave_systemstack_switch", "racecall":
 					// These are context switch/race
 					// critical that we can't do a full
@@ -1864,25 +1928,28 @@ func TestLabelSystemstack(t *testing.T) {
 				}
 			}
 		}
-		if mustNotBeLabeled {
-			// If this must not be labeled, then mayBeLabeled hints
-			// are not relevant.
+		errorStack := func(f string, args ...any) {
+			var buf strings.Builder
+			fprintStack(&buf, s.Location)
+			t.Errorf("%s: %s", fmt.Sprintf(f, args...), buf.String())
+		}
+		if mustBeLabeled != "" && mustNotBeLabeled != "" {
+			errorStack("sample contains both %s, which must be labeled, and %s, which must not be labeled", mustBeLabeled, mustNotBeLabeled)
+			continue
+		}
+		if mustBeLabeled != "" || mustNotBeLabeled != "" {
+			// We found a definitive frame, so mayBeLabeled hints are not relevant.
 			mayBeLabeled = false
 		}
-		if mustBeLabeled && !isLabeled {
-			var buf strings.Builder
-			fprintStack(&buf, s.Location)
-			t.Errorf("Sample labeled got false want true: %s", buf.String())
+		if mayBeLabeled {
+			// This sample may or may not be labeled, so there's nothing we can check.
+			continue
 		}
-		if mustNotBeLabeled && isLabeled {
-			var buf strings.Builder
-			fprintStack(&buf, s.Location)
-			t.Errorf("Sample labeled got true want false: %s", buf.String())
+		if mustBeLabeled != "" && !isLabeled {
+			errorStack("sample must be labeled because of %s, but is not", mustBeLabeled)
 		}
-		if isLabeled && !(mayBeLabeled || mustBeLabeled) {
-			var buf strings.Builder
-			fprintStack(&buf, s.Location)
-			t.Errorf("Sample labeled got true want false: %s", buf.String())
+		if mustNotBeLabeled != "" && isLabeled {
+			errorStack("sample must not be labeled because of %s, but is", mustNotBeLabeled)
 		}
 	}
 }
@@ -2004,6 +2071,8 @@ func TestTryAdd(t *testing.T) {
 	for i := range pcs {
 		inlinedCallerStack[i] = uint64(pcs[i])
 	}
+	wrapperPCs := make([]uintptr, 1)
+	inlinedWrapperCallerDump(wrapperPCs)
 
 	if _, found := findInlinedCall(recursionChainBottom, 4<<10); !found {
 		t.Skip("Can't determine whether anything was inlined into recursionChainBottom.")
@@ -2175,6 +2244,17 @@ func TestTryAdd(t *testing.T) {
 		wantSamples: []*profile.Sample{
 			{Value: []int64{70, 70 * period}, Location: []*profile.Location{{ID: 1}}},
 			{Value: []int64{80, 80 * period}, Location: []*profile.Location{{ID: 2}, {ID: 1}}},
+		},
+	}, {
+		name: "expand_wrapper_function",
+		input: []uint64{
+			3, 0, 500, // hz = 500. Must match the period.
+			4, 0, 50, uint64(wrapperPCs[0]),
+		},
+		count:    2,
+		wantLocs: [][]string{{"runtime/pprof.inlineWrapper.dump"}},
+		wantSamples: []*profile.Sample{
+			{Value: []int64{50, 50 * period}, Location: []*profile.Location{{ID: 1}}},
 		},
 	}}
 

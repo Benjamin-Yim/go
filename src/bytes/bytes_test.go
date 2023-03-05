@@ -1159,6 +1159,8 @@ type RepeatTest struct {
 	count   int
 }
 
+var longString = "a" + string(make([]byte, 1<<16)) + "z"
+
 var RepeatTests = []RepeatTest{
 	{"", "", 0},
 	{"", "", 1},
@@ -1167,6 +1169,9 @@ var RepeatTests = []RepeatTest{
 	{"-", "-", 1},
 	{"-", "----------", 10},
 	{"abc ", "abc abc abc ", 3},
+	// Tests for results over the chunkLimit
+	{string(rune(0)), string(make([]byte, 1<<16)), 1 << 16},
+	{longString, longString + longString, 2},
 }
 
 func TestRepeat(t *testing.T) {
@@ -1723,7 +1728,7 @@ func TestCutPrefix(t *testing.T) {
 
 var cutSuffixTests = []struct {
 	s, sep string
-	after  string
+	before string
 	found  bool
 }{
 	{"abc", "bc", "a", true},
@@ -1736,8 +1741,8 @@ var cutSuffixTests = []struct {
 
 func TestCutSuffix(t *testing.T) {
 	for _, tt := range cutSuffixTests {
-		if after, found := CutSuffix([]byte(tt.s), []byte(tt.sep)); string(after) != tt.after || found != tt.found {
-			t.Errorf("CutSuffix(%q, %q) = %q, %v, want %q, %v", tt.s, tt.sep, after, found, tt.after, tt.found)
+		if before, found := CutSuffix([]byte(tt.s), []byte(tt.sep)); string(before) != tt.before || found != tt.found {
+			t.Errorf("CutSuffix(%q, %q) = %q, %v, want %q, %v", tt.s, tt.sep, before, found, tt.before, tt.found)
 		}
 	}
 }
@@ -1837,6 +1842,17 @@ func TestContainsRune(t *testing.T) {
 	for _, ct := range ContainsRuneTests {
 		if ContainsRune(ct.b, ct.r) != ct.expected {
 			t.Errorf("ContainsRune(%q, %q) = %v, want %v",
+				ct.b, ct.r, !ct.expected, ct.expected)
+		}
+	}
+}
+
+func TestContainsFunc(t *testing.T) {
+	for _, ct := range ContainsRuneTests {
+		if ContainsFunc(ct.b, func(r rune) bool {
+			return ct.r == r
+		}) != ct.expected {
+			t.Errorf("ContainsFunc(%q, func(%q)) = %v, want %v",
 				ct.b, ct.r, !ct.expected, ct.expected)
 		}
 	}
@@ -2045,6 +2061,25 @@ func BenchmarkSplitNMultiByteSeparator(b *testing.B) {
 func BenchmarkRepeat(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		Repeat([]byte("-"), 80)
+	}
+}
+
+func BenchmarkRepeatLarge(b *testing.B) {
+	s := Repeat([]byte("@"), 8*1024)
+	for j := 8; j <= 30; j++ {
+		for _, k := range []int{1, 16, 4097} {
+			s := s[:k]
+			n := (1 << j) / k
+			if n == 0 {
+				continue
+			}
+			b.Run(fmt.Sprintf("%d/%d", 1<<j, k), func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					Repeat(s, n)
+				}
+				b.SetBytes(int64(n * len(s)))
+			})
+		}
 	}
 }
 
