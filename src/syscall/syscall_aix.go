@@ -222,7 +222,7 @@ func Wait4(pid int, wstatus *WaitStatus, options int, rusage *Rusage) (wpid int,
 	var status _C_int
 	var r _Pid_t
 	err = ERESTART
-	// AIX wait4 may return with ERESTART errno, while the processus is still
+	// AIX wait4 may return with ERESTART errno, while the process is still
 	// active.
 	for err == ERESTART {
 		r, err = wait4(_Pid_t(pid), &status, options, rusage)
@@ -633,7 +633,7 @@ func PtraceDetach(pid int) (err error) { return ptrace64(PT_DETACH, int64(pid), 
 //sys	Setpriority(which int, who int, prio int) (err error)
 //sysnb	Setregid(rgid int, egid int) (err error)
 //sysnb	Setreuid(ruid int, euid int) (err error)
-//sysnb	Setrlimit(which int, lim *Rlimit) (err error)
+//sysnb	setrlimit(which int, lim *Rlimit) (err error)
 //sys	Stat(path string, stat *Stat_t) (err error)
 //sys	Statfs(path string, buf *Statfs_t) (err error)
 //sys	Symlink(path string, link string) (err error)

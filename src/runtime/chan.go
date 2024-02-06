@@ -70,17 +70,17 @@ func makechan64(t *chantype, size int64) *hchan {
 }
 
 func makechan(t *chantype, size int) *hchan {
-	elem := t.elem
+	elem := t.Elem
 
 	// compiler checks this but be safe.
-	if elem.size >= 1<<16 {
+	if elem.Size_ >= 1<<16 {
 		throw("makechan: invalid channel element type")
 	}
-	if hchanSize%maxAlign != 0 || elem.align > maxAlign {
+	if hchanSize%maxAlign != 0 || elem.Align_ > maxAlign {
 		throw("makechan: bad alignment")
 	}
 
-	mem, overflow := math.MulUintptr(elem.size, uintptr(size))
+	mem, overflow := math.MulUintptr(elem.Size_, uintptr(size))
 	if overflow || mem > maxAlloc-hchanSize || size < 0 {
 		panic(plainError("makechan: size out of range"))
 	}
@@ -96,7 +96,7 @@ func makechan(t *chantype, size int) *hchan {
 		c = (*hchan)(mallocgc(hchanSize, nil, true))
 		// Race detector uses this location for synchronization.
 		c.buf = c.raceaddr()
-	case elem.ptrdata == 0:
+	case elem.PtrBytes == 0:
 		// Elements do not contain pointers.
 		// Allocate hchan and buf in one call.
 		c = (*hchan)(mallocgc(hchanSize+mem, nil, true))
@@ -107,13 +107,13 @@ func makechan(t *chantype, size int) *hchan {
 		c.buf = mallocgc(mem, elem, true)
 	}
 
-	c.elemsize = uint16(elem.size)
+	c.elemsize = uint16(elem.Size_)
 	c.elemtype = elem
 	c.dataqsiz = uint(size)
 	lockInit(&c.lock, lockRankHchan)
 
 	if debugChan {
-		print("makechan: chan=", c, "; elemsize=", elem.size, "; dataqsiz=", size, "\n")
+		print("makechan: chan=", c, "; elemsize=", elem.Size_, "; dataqsiz=", size, "\n")
 	}
 	return c
 }
@@ -164,7 +164,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 		if !block {
 			return false
 		}
-		gopark(nil, nil, waitReasonChanSendNilChan, traceEvGoStop, 2)
+		gopark(nil, nil, waitReasonChanSendNilChan, traceBlockForever, 2)
 		throw("unreachable")
 	}
 
@@ -265,7 +265,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 	// stack shrinking.
 	gp.parkingOnChan.Store(true)
 	// 调用gopark函数.通过mcall函数调用park_m函数
-	gopark(chanparkcommit, unsafe.Pointer(&c.lock), waitReasonChanSend, traceEvGoBlockSend, 2)
+	gopark(chanparkcommit, unsafe.Pointer(&c.lock), waitReasonChanSend, traceBlockChanSend, 2)
 	// Ensure the value being sent is kept alive until the
 	// receiver copies it out. The sudog has a pointer to the
 	// stack object, but sudogs aren't considered as roots of the
@@ -354,10 +354,10 @@ func sendDirect(t *_type, sg *sudog, src unsafe.Pointer) {
 	// be updated if the destination's stack gets copied (shrunk).
 	// So make sure that no preemption points can happen between read & use.
 	dst := sg.elem
-	typeBitsBulkBarrier(t, uintptr(dst), uintptr(src), t.size)
+	typeBitsBulkBarrier(t, uintptr(dst), uintptr(src), t.Size_)
 	// No need for cgo write barrier checks because dst is always
 	// Go memory.
-	memmove(dst, src, t.size)
+	memmove(dst, src, t.Size_)
 }
 
 func recvDirect(t *_type, sg *sudog, dst unsafe.Pointer) {
@@ -365,8 +365,8 @@ func recvDirect(t *_type, sg *sudog, dst unsafe.Pointer) {
 	// The channel is locked, so src will not move during this
 	// operation.
 	src := sg.elem
-	typeBitsBulkBarrier(t, uintptr(dst), uintptr(src), t.size)
-	memmove(dst, src, t.size)
+	typeBitsBulkBarrier(t, uintptr(dst), uintptr(src), t.Size_)
+	memmove(dst, src, t.Size_)
 }
 
 // 关闭channel实际调用的是 closechan 函数
@@ -487,7 +487,7 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 		if !block {
 			return
 		}
-		gopark(nil, nil, waitReasonChanReceiveNilChan, traceEvGoStop, 2)
+		gopark(nil, nil, waitReasonChanReceiveNilChan, traceBlockForever, 2)
 		throw("unreachable")
 	}
 
@@ -607,7 +607,7 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 	// stack shrinking.
 	gp.parkingOnChan.Store(true)
 	// 调用gopark函数
-	gopark(chanparkcommit, unsafe.Pointer(&c.lock), waitReasonChanReceive, traceEvGoBlockRecv, 2)
+	gopark(chanparkcommit, unsafe.Pointer(&c.lock), waitReasonChanReceive, traceBlockChanRecv, 2)
 
 	// someone woke us up
 	if mysg != gp.waiting {
@@ -747,7 +747,7 @@ func selectnbrecv(elem unsafe.Pointer, c *hchan) (selected, received bool) {
 	return chanrecv(c, elem, false)
 }
 
-//go:linkname reflect_chansend reflect.chansend
+//go:linkname reflect_chansend reflect.chansend0
 func reflect_chansend(c *hchan, elem unsafe.Pointer, nb bool) (selected bool) {
 	return chansend(c, elem, !nb, getcallerpc())
 }

@@ -88,6 +88,7 @@ const (
 	largeSizeDiv    = 128
 	_NumSizeClasses = 68
 	_PageShift      = 13
+	maxObjsPerSpan  = 1024
 )
 
 //分配器将其管理的内存块分为两种：

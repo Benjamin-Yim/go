@@ -41,8 +41,9 @@ const (
 	_INFINITE     = 0xffffffff
 	_WAIT_TIMEOUT = 0x102
 
-	_EXCEPTION_CONTINUE_EXECUTION = -0x1
-	_EXCEPTION_CONTINUE_SEARCH    = 0x0
+	_EXCEPTION_CONTINUE_EXECUTION  = -0x1
+	_EXCEPTION_CONTINUE_SEARCH     = 0x0
+	_EXCEPTION_CONTINUE_SEARCH_SEH = 0x1
 )
 
 type systeminfo struct {
@@ -67,7 +68,7 @@ type exceptionrecord struct {
 	exceptioncode        uint32
 	exceptionflags       uint32
 	exceptionrecord      *exceptionrecord
-	exceptionaddress     *byte
+	exceptionaddress     uintptr
 	numberparameters     uint32
 	exceptioninformation [15]uintptr
 }

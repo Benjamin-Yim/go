@@ -79,7 +79,9 @@ func kqueue() int32
 func kevent(kq int32, ch *keventt, nch int32, ev *keventt, nev int32, ts *timespec) int32
 
 func pipe2(flags int32) (r, w int32, errno int32)
-func closeonexec(fd int32)
+func fcntl(fd, cmd, arg int32) (ret int32, errno int32)
+
+func issetugid() int32
 
 const (
 	_ESRCH     = 3
@@ -272,11 +274,11 @@ func osinit() {
 var urandom_dev = []byte("/dev/urandom\x00")
 
 //go:nosplit
-func getRandomData(r []byte) {
+func readRandom(r []byte) int {
 	fd := open(&urandom_dev[0], 0 /* O_RDONLY */, 0)
 	n := read(fd, unsafe.Pointer(&r[0]), int32(len(r)))
 	closefd(fd)
-	extendRandom(r, int(n))
+	return int(n)
 }
 
 func goenvs() {
@@ -314,6 +316,8 @@ func minit() {
 //go:nosplit
 func unminit() {
 	unminitSignals()
+	// Don't clear procid, it is used by locking (semawake), and locking
+	// must continue working after unminit.
 }
 
 // Called from exitm, but not from drop, to undo the effect of thread-owned

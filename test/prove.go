@@ -1,7 +1,6 @@
 // errorcheck -0 -d=ssa/prove/debug=1
 
 //go:build amd64
-// +build amd64
 
 // Copyright 2016 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -397,8 +396,11 @@ func f13e(a int) int {
 	return 0
 }
 
-func f13f(a int64) int64 {
-	if a > math.MaxInt64 {
+func f13f(a, b int64) int64 {
+	if b != math.MaxInt64 {
+		return 42
+	}
+	if a > b {
 		if a == 0 { // ERROR "Disproved Eq64$"
 			return 1
 		}
@@ -870,9 +872,12 @@ func unrollInclStepTooLarge(a []int) int {
 }
 
 // Not an induction variable (min too small, iterating down)
-func unrollDecMin(a []int) int {
+func unrollDecMin(a []int, b int) int {
+	if b != math.MinInt64 {
+		return 42
+	}
 	var i, x int
-	for i = len(a); i >= math.MinInt64; i -= 2 {
+	for i = len(a); i >= b; i -= 2 {
 		x += a[i-1]
 		x += a[i-2]
 	}
@@ -883,9 +888,12 @@ func unrollDecMin(a []int) int {
 }
 
 // Not an induction variable (min too small, iterating up -- perhaps could allow, but why bother?)
-func unrollIncMin(a []int) int {
+func unrollIncMin(a []int, b int) int {
+	if b != math.MinInt64 {
+		return 42
+	}
 	var i, x int
-	for i = len(a); i >= math.MinInt64; i += 2 {
+	for i = len(a); i >= b; i += 2 {
 		x += a[i-1]
 		x += a[i-2]
 	}
@@ -1038,6 +1046,25 @@ func divShiftClean32(n int32) int32 {
 	return n / int32(16) // ERROR "Proved Rsh32x64 shifts to zero"
 }
 
+// Bounds check elimination
+
+func sliceBCE1(p []string, h uint) string {
+	if len(p) == 0 {
+		return ""
+	}
+
+	i := h & uint(len(p)-1)
+	return p[i] // ERROR "Proved IsInBounds$"
+}
+
+func sliceBCE2(p []string, h int) string {
+	if len(p) == 0 {
+		return ""
+	}
+	i := h & (len(p) - 1)
+	return p[i] // ERROR "Proved IsInBounds$"
+}
+
 func and(p []byte) ([]byte, []byte) { // issue #52563
 	const blocksize = 16
 	fullBlocks := len(p) &^ (blocksize - 1)
@@ -1090,6 +1117,11 @@ func issue51622(b []byte) int {
 		return len(b)
 	}
 	return 0
+}
+
+func issue45928(x int) {
+	combinedFrac := x / (x | (1 << 31)) // ERROR "Proved Neq64$"
+	useInt(combinedFrac)
 }
 
 //go:noinline

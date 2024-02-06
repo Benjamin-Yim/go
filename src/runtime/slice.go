@@ -40,11 +40,11 @@ func makeslicecopy(et *_type, tolen int, fromlen int, from unsafe.Pointer) unsaf
 	var tomem, copymem uintptr
 	if uintptr(tolen) > uintptr(fromlen) {
 		var overflow bool
-		tomem, overflow = math.MulUintptr(et.size, uintptr(tolen))
+		tomem, overflow = math.MulUintptr(et.Size_, uintptr(tolen))
 		if overflow || tomem > maxAlloc || tolen < 0 {
 			panicmakeslicelen()
 		}
-		copymem = et.size * uintptr(fromlen)
+		copymem = et.Size_ * uintptr(fromlen)
 	} else {
 		// 内存整理的时候才会使用？
 		// fromlen is a known good length providing and equal or greater than tolen,
@@ -52,12 +52,13 @@ func makeslicecopy(et *_type, tolen int, fromlen int, from unsafe.Pointer) unsaf
 		// same element width.
 		// fromlen是一个已知的正常的长度，它等于或大于tolen，从而使tolen也是一个好的切片长度，
 		// 因为from和to切片具有相同的元素宽度。
-		tomem = et.size * uintptr(tolen)
+		tomem = et.Size_ * uintptr(tolen)
 		copymem = tomem
 	}
 
 	var to unsafe.Pointer
-	if et.ptrdata == 0 { // 非指针类型
+	// 非指针类型
+	if et.PtrBytes == 0 {
 		to = mallocgc(tomem, nil, false)
 		if copymem < tomem {
 			// 清空内存，没有写屏障
@@ -70,8 +71,12 @@ func makeslicecopy(et *_type, tolen int, fromlen int, from unsafe.Pointer) unsaf
 		if copymem > 0 && writeBarrier.enabled {
 			// Only shade the pointers in old.array since we know the destination slice to
 			// only contains nil pointers because it has been cleared during alloc.
+			//
+			// It's safe to pass a type to this function as an optimization because
+			// from and to only ever refer to memory representing whole values of
+			// type et. See the comment on bulkBarrierPreWrite.
 			// 只对“old.array”中的指针进行着色处理，因为我们知道目标切片只包含零指针，因为它在分配期间已被清除。
-			bulkBarrierPreWriteSrcOnly(uintptr(to), uintptr(from), copymem)
+			bulkBarrierPreWriteSrcOnly(uintptr(to), uintptr(from), copymem, et)
 		}
 	}
 
@@ -93,14 +98,15 @@ func makeslicecopy(et *_type, tolen int, fromlen int, from unsafe.Pointer) unsaf
 }
 
 func makeslice(et *_type, len, cap int) unsafe.Pointer {
-	mem, overflow := math.MulUintptr(et.size, uintptr(cap))
-	if overflow || mem > maxAlloc || len < 0 || len > cap { // cap 总是大于len。len 永远大于0。可分配内存不可以大于最大内存
+	mem, overflow := math.MulUintptr(et.Size_, uintptr(cap))
+	// cap 总是大于len。len 永远大于0。可分配内存不可以大于最大内存
+	if overflow || mem > maxAlloc || len < 0 || len > cap {
 		// NOTE: Produce a 'len out of range' error instead of a
 		// 'cap out of range' error when someone does make([]T, bignumber).
 		// 'cap out of range' is true too, but since the cap is only being
 		// supplied implicitly, saying len is clearer.
 		// See golang.org/issue/4085.
-		mem, overflow := math.MulUintptr(et.size, uintptr(len))
+		mem, overflow := math.MulUintptr(et.Size_, uintptr(len))
 		if overflow || mem > maxAlloc || len < 0 {
 			panicmakeslicelen()
 		}
@@ -122,12 +128,6 @@ func makeslice64(et *_type, len64, cap64 int64) unsafe.Pointer {
 	}
 
 	return makeslice(et, len, cap)
-}
-
-// This is a wrapper over runtime/internal/math.MulUintptr,
-// so the compiler can recognize and treat it as an intrinsic.
-func mulUintptr(a, b uintptr) (uintptr, bool) {
-	return math.MulUintptr(a, b)
 }
 
 // growslice allocates new backing store for a slice.
@@ -165,91 +165,68 @@ func growslice(oldPtr unsafe.Pointer, newLen, oldCap, num int, et *_type) slice 
 	oldLen := newLen - num
 	if raceenabled {
 		callerpc := getcallerpc()
-		racereadrangepc(oldPtr, uintptr(oldLen*int(et.size)), callerpc, abi.FuncPCABIInternal(growslice))
+		racereadrangepc(oldPtr, uintptr(oldLen*int(et.Size_)), callerpc, abi.FuncPCABIInternal(growslice))
 	}
 	if msanenabled {
-		msanread(oldPtr, uintptr(oldLen*int(et.size)))
+		msanread(oldPtr, uintptr(oldLen*int(et.Size_)))
 	}
 	if asanenabled {
-		asanread(oldPtr, uintptr(oldLen*int(et.size)))
+		asanread(oldPtr, uintptr(oldLen*int(et.Size_)))
 	}
 
 	if newLen < 0 {
 		panic(errorString("growslice: len out of range"))
 	}
 
-	if et.size == 0 {
+	if et.Size_ == 0 {
 		// append should not create a slice with nil pointer but non-zero len.
 		// We assume that append doesn't need to preserve oldPtr in this case.
 		return slice{unsafe.Pointer(&zerobase), newLen, newLen}
 	}
 
-	newcap := oldCap
-	doublecap := newcap + newcap
-	if newLen > doublecap {
-		newcap = newLen
-	} else {
-		const threshold = 256
-		if oldCap < threshold {
-			newcap = doublecap
-		} else {
-			// Check 0 < newcap to detect overflow
-			// and prevent an infinite loop.
-			for 0 < newcap && newcap < newLen {
-				// Transition from growing 2x for small slices
-				// to growing 1.25x for large slices. This formula
-				// gives a smooth-ish transition between the two.
-				// 从小片的增长2倍过渡到大片的增长1.25倍。这个公式在两者之间给出了一个平滑的过渡。
-				newcap += (newcap + 3*threshold) / 4
-			}
-			// Set newcap to the requested cap when
-			// the newcap calculation overflowed.
-			if newcap <= 0 {
-				newcap = newLen
-			}
-		}
-	}
+	newcap := nextslicecap(newLen, oldCap)
 
 	var overflow bool
 	var lenmem, newlenmem, capmem uintptr
-	// Specialize for common values of et.size.
+	// Specialize for common values of et.Size.
 	// For 1 we don't need any division/multiplication.
 	// For goarch.PtrSize, compiler will optimize division/multiplication into a shift by a constant.
 	// For powers of 2, use a variable shift.
+	noscan := et.PtrBytes == 0
 	switch {
-	case et.size == 1:
+	case et.Size_ == 1:
 		lenmem = uintptr(oldLen)
 		newlenmem = uintptr(newLen)
-		capmem = roundupsize(uintptr(newcap))
+		capmem = roundupsize(uintptr(newcap), noscan)
 		overflow = uintptr(newcap) > maxAlloc
 		newcap = int(capmem)
-	case et.size == goarch.PtrSize:
+	case et.Size_ == goarch.PtrSize:
 		lenmem = uintptr(oldLen) * goarch.PtrSize
 		newlenmem = uintptr(newLen) * goarch.PtrSize
-		capmem = roundupsize(uintptr(newcap) * goarch.PtrSize)
+		capmem = roundupsize(uintptr(newcap)*goarch.PtrSize, noscan)
 		overflow = uintptr(newcap) > maxAlloc/goarch.PtrSize
 		newcap = int(capmem / goarch.PtrSize)
-	case isPowerOfTwo(et.size):
+	case isPowerOfTwo(et.Size_):
 		var shift uintptr
 		if goarch.PtrSize == 8 {
 			// Mask shift for better code generation.
-			shift = uintptr(sys.TrailingZeros64(uint64(et.size))) & 63
+			shift = uintptr(sys.TrailingZeros64(uint64(et.Size_))) & 63
 		} else {
-			shift = uintptr(sys.TrailingZeros32(uint32(et.size))) & 31
+			shift = uintptr(sys.TrailingZeros32(uint32(et.Size_))) & 31
 		}
 		lenmem = uintptr(oldLen) << shift
 		newlenmem = uintptr(newLen) << shift
-		capmem = roundupsize(uintptr(newcap) << shift)
+		capmem = roundupsize(uintptr(newcap)<<shift, noscan)
 		overflow = uintptr(newcap) > (maxAlloc >> shift)
 		newcap = int(capmem >> shift)
 		capmem = uintptr(newcap) << shift
 	default:
-		lenmem = uintptr(oldLen) * et.size
-		newlenmem = uintptr(newLen) * et.size
-		capmem, overflow = math.MulUintptr(et.size, uintptr(newcap))
-		capmem = roundupsize(capmem)
-		newcap = int(capmem / et.size)
-		capmem = uintptr(newcap) * et.size
+		lenmem = uintptr(oldLen) * et.Size_
+		newlenmem = uintptr(newLen) * et.Size_
+		capmem, overflow = math.MulUintptr(et.Size_, uintptr(newcap))
+		capmem = roundupsize(capmem, noscan)
+		newcap = int(capmem / et.Size_)
+		capmem = uintptr(newcap) * et.Size_
 	}
 
 	// The check of overflow in addition to capmem > maxAlloc is needed
@@ -270,8 +247,7 @@ func growslice(oldPtr unsafe.Pointer, newLen, oldCap, num int, et *_type) slice 
 	}
 
 	var p unsafe.Pointer
-	//print("growslice, et.ptrdata:", et.ptrdata, ",capmem:", capmem, "\n")
-	if et.ptrdata == 0 {
+	if et.PtrBytes == 0 {
 		p = mallocgc(capmem, nil, false)
 		// The append() that calls growslice is going to overwrite from oldLen to newLen.
 		// Only clear the part that will not be overwritten.
@@ -284,12 +260,51 @@ func growslice(oldPtr unsafe.Pointer, newLen, oldCap, num int, et *_type) slice 
 		if lenmem > 0 && writeBarrier.enabled {
 			// Only shade the pointers in oldPtr since we know the destination slice p
 			// only contains nil pointers because it has been cleared during alloc.
-			bulkBarrierPreWriteSrcOnly(uintptr(p), uintptr(oldPtr), lenmem-et.size+et.ptrdata)
+			//
+			// It's safe to pass a type to this function as an optimization because
+			// from and to only ever refer to memory representing whole values of
+			// type et. See the comment on bulkBarrierPreWrite.
+			bulkBarrierPreWriteSrcOnly(uintptr(p), uintptr(oldPtr), lenmem-et.Size_+et.PtrBytes, et)
 		}
 	}
 	memmove(p, oldPtr, lenmem)
 
 	return slice{p, newLen, newcap}
+}
+
+// nextslicecap computes the next appropriate slice length.
+func nextslicecap(newLen, oldCap int) int {
+	newcap := oldCap
+	doublecap := newcap + newcap
+	if newLen > doublecap {
+		return newLen
+	}
+
+	const threshold = 256
+	if oldCap < threshold {
+		return doublecap
+	}
+	for {
+		// Transition from growing 2x for small slices
+		// to growing 1.25x for large slices. This formula
+		// gives a smooth-ish transition between the two.
+		newcap += (newcap + 3*threshold) >> 2
+
+		// We need to check `newcap >= newLen` and whether `newcap` overflowed.
+		// newLen is guaranteed to be larger than zero, hence
+		// when newcap overflows then `uint(newcap) > uint(newLen)`.
+		// This allows to check for both with the same comparison.
+		if uint(newcap) >= uint(newLen) {
+			break
+		}
+	}
+
+	// Set newcap to the requested cap when
+	// the newcap calculation overflowed.
+	if newcap <= 0 {
+		return newLen
+	}
+	return newcap
 }
 
 //go:linkname reflect_growslice reflect.growslice
@@ -302,9 +317,9 @@ func reflect_growslice(et *_type, old slice, num int) slice {
 	// the memory will be overwritten by an append() that called growslice.
 	// Since the caller of reflect_growslice is not append(),
 	// zero out this region before returning the slice to the reflect package.
-	if et.ptrdata == 0 {
-		oldcapmem := uintptr(old.cap) * et.size
-		newlenmem := uintptr(new.len) * et.size
+	if et.PtrBytes == 0 {
+		oldcapmem := uintptr(old.cap) * et.Size_
+		newlenmem := uintptr(new.len) * et.Size_
 		memclrNoHeapPointers(add(new.array, oldcapmem), newlenmem-oldcapmem)
 	}
 	new.len = old.len // preserve the old length

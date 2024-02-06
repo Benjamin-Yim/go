@@ -9,7 +9,7 @@
 // func rt0_go()
 TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 	// X2 = stack; A0 = argc; A1 = argv
-	ADD	$-24, X2
+	SUB	$24, X2
 	MOV	A0, 8(X2)	// argc
 	MOV	A1, 16(X2)	// argv
 
@@ -36,7 +36,7 @@ TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 nocgo:
 	// update stackguard after _cgo_init
 	MOV	(g_stack+stack_lo)(g), T0
-	ADD	$const__StackGuard, T0
+	ADD	$const_stackGuard, T0
 	MOV	T0, g_stackguard0(g)
 	MOV	T0, g_stackguard1(g)
 
@@ -57,7 +57,7 @@ nocgo:
 
 	// create a new goroutine to start program
 	MOV	$runtime·mainPC(SB), T0		// entry
-	ADD	$-16, X2
+	SUB	$16, X2
 	MOV	T0, 8(X2)
 	MOV	ZERO, 0(X2)
 	CALL	runtime·newproc(SB)
@@ -148,10 +148,29 @@ noswitch:
 	ADD	$8, X2
 	JMP	(T1)
 
-TEXT runtime·getcallerpc(SB),NOSPLIT|NOFRAME,$0-8
-	MOV	0(X2), T0		// LR saved by caller
-	MOV	T0, ret+0(FP)
-	RET
+// func switchToCrashStack0(fn func())
+TEXT runtime·switchToCrashStack0<ABIInternal>(SB), NOSPLIT, $0-8
+	MOV	X10, CTXT			// context register
+	MOV	g_m(g), X11			// curm
+
+	// set g to gcrash
+	MOV	$runtime·gcrash(SB), g	// g = &gcrash
+	CALL	runtime·save_g(SB)	// clobbers X31
+	MOV	X11, g_m(g)			// g.m = curm
+	MOV	g, m_g0(X11)			// curm.g0 = g
+
+	// switch to crashstack
+	MOV	(g_stack+stack_hi)(g), X11
+	SUB	$(4*8), X11
+	MOV	X11, X2
+
+	// call target function
+	MOV	0(CTXT), X10
+	JALR	X1, X10
+
+	// should never return
+	CALL	runtime·abort(SB)
+	UNDEF
 
 /*
  * support for morestack
@@ -168,6 +187,13 @@ TEXT runtime·getcallerpc(SB),NOSPLIT|NOFRAME,$0-8
 
 // func morestack()
 TEXT runtime·morestack(SB),NOSPLIT|NOFRAME,$0-0
+	// Called from f.
+	// Set g->sched to context in f.
+	MOV	X2, (g_sched+gobuf_sp)(g)
+	MOV	T0, (g_sched+gobuf_pc)(g)
+	MOV	RA, (g_sched+gobuf_lr)(g)
+	MOV	CTXT, (g_sched+gobuf_ctxt)(g)
+
 	// Cannot grow scheduler stack (m->g0).
 	MOV	g_m(g), A0
 	MOV	m_g0(A0), A1
@@ -182,13 +208,6 @@ TEXT runtime·morestack(SB),NOSPLIT|NOFRAME,$0-0
 	CALL	runtime·abort(SB)
 
 	// Called from f.
-	// Set g->sched to context in f.
-	MOV	X2, (g_sched+gobuf_sp)(g)
-	MOV	T0, (g_sched+gobuf_pc)(g)
-	MOV	RA, (g_sched+gobuf_lr)(g)
-	MOV	CTXT, (g_sched+gobuf_ctxt)(g)
-
-	// Called from f.
 	// Set m->morebuf to f's caller.
 	MOV	RA, (m_morebuf+gobuf_pc)(A0)	// f's caller's PC
 	MOV	X2, (m_morebuf+gobuf_sp)(A0)	// f's caller's SP
@@ -200,7 +219,7 @@ TEXT runtime·morestack(SB),NOSPLIT|NOFRAME,$0-0
 	MOV	(g_sched+gobuf_sp)(g), X2
 	// Create a stack frame on g0 to call newstack.
 	MOV	ZERO, -8(X2)	// Zero saved LR in frame
-	ADD	$-8, X2
+	SUB	$8, X2
 	CALL	runtime·newstack(SB)
 
 	// Not reached, but make sure the return PC from the call to newstack
@@ -285,7 +304,7 @@ TEXT runtime·mcall<ABIInternal>(SB), NOSPLIT|NOFRAME, $0-8
 	MOV	0(CTXT), T1			// code pointer
 	MOV	(g_sched+gobuf_sp)(g), X2	// sp = m->g0->sched.sp
 	// we don't need special macro for regabi since arg0(X10) = g
-	ADD	$-16, X2
+	SUB	$16, X2
 	MOV	X10, 8(X2)			// setup g
 	MOV	ZERO, 0(X2)			// clear return address
 	JALR	RA, T1
@@ -307,6 +326,15 @@ TEXT gosave_systemstack_switch<>(SB),NOSPLIT|NOFRAME,$0
 	MOV	(g_sched+gobuf_ctxt)(g), X31
 	BEQ	ZERO, X31, 2(PC)
 	CALL	runtime·abort(SB)
+	RET
+
+// func asmcgocall_no_g(fn, arg unsafe.Pointer)
+// Call fn(arg) aligned appropriately for the gcc ABI.
+// Called on a system stack, and there may be no g yet (during needm).
+TEXT ·asmcgocall_no_g(SB),NOSPLIT,$0-16
+	MOV	fn+0(FP), X5
+	MOV	arg+8(FP), X10
+	JALR	RA, (X5)
 	RET
 
 // func asmcgocall(fn, arg unsafe.Pointer) int32
@@ -338,7 +366,7 @@ TEXT ·asmcgocall(SB),NOSPLIT,$0-20
 	// Now on a scheduling stack (a pthread-created stack).
 g0:
 	// Save room for two of our pointers.
-	ADD	$-16, X2
+	SUB	$16, X2
 	MOV	X9, 0(X2)	// save old g on stack
 	MOV	(g_stack+stack_hi)(X9), X9
 	SUB	X8, X9, X8
@@ -519,13 +547,23 @@ TEXT runtime·goexit(SB),NOSPLIT|NOFRAME|TOPFRAME,$0-0
 TEXT ·cgocallback(SB),NOSPLIT,$24-24
 	NO_LOCAL_POINTERS
 
+	// Skip cgocallbackg, just dropm when fn is nil, and frame is the saved g.
+	// It is used to dropm while thread is exiting.
+	MOV	fn+0(FP), X7
+	BNE	ZERO, X7, loadg
+	// Restore the g from frame.
+	MOV	frame+8(FP), g
+	JMP	dropm
+
+loadg:
 	// Load m and g from thread-local storage.
 	MOVBU	runtime·iscgo(SB), X5
 	BEQ	ZERO, X5, nocgo
 	CALL	runtime·load_g(SB)
 nocgo:
 
-	// If g is nil, Go did not create the current thread.
+	// If g is nil, Go did not create the current thread,
+	// or if this thread never called into Go on pthread platforms.
 	// Call needm to obtain one for temporary use.
 	// In this case, we're running on the thread stack, so there's
 	// lots of space, but the linker doesn't know. Hide the call from
@@ -538,7 +576,7 @@ nocgo:
 
 needm:
 	MOV	g, savedm-8(SP) // g is zero, so is m.
-	MOV	$runtime·needm(SB), X6
+	MOV	$runtime·needAndBindM(SB), X6
 	JALR	RA, X6
 
 	// Set m->sched.sp = SP, so that if a panic happens
@@ -609,10 +647,24 @@ havem:
 	MOV	savedsp-24(SP), X6	// must match frame size
 	MOV	X6, (g_sched+gobuf_sp)(g)
 
-	// If the m on entry was nil, we called needm above to borrow an m
-	// for the duration of the call. Since the call is over, return it with dropm.
+	// If the m on entry was nil, we called needm above to borrow an m,
+	// 1. for the duration of the call on non-pthread platforms,
+	// 2. or the duration of the C thread alive on pthread platforms.
+	// If the m on entry wasn't nil,
+	// 1. the thread might be a Go thread,
+	// 2. or it wasn't the first call from a C thread on pthread platforms,
+	//    since then we skip dropm to reuse the m in the first call.
 	MOV	savedm-8(SP), X5
 	BNE	ZERO, X5, droppedm
+
+	// Skip dropm to reuse it in the next call, when a pthread key has been created.
+	MOV	_cgo_pthread_key_created(SB), X5
+	// It means cgo is disabled when _cgo_pthread_key_created is a nil pointer, need dropm.
+	BEQ	ZERO, X5, dropm
+	MOV	(X5), X5
+	BNE	ZERO, X5, droppedm
+
+dropm:
 	MOV	$runtime·dropm(SB), X6
 	JALR	RA, X6
 droppedm:
@@ -716,7 +768,7 @@ TEXT ·unspillArgs(SB),NOSPLIT,$0-0
 //
 // gcWriteBarrier does NOT follow the Go ABI. It accepts the
 // number of bytes of buffer needed in X24, and returns a pointer
-// to the buffer spcae in X24.
+// to the buffer space in X24.
 // It clobbers X31 aka T6 (the linker temp register - REG_TMP).
 // The act of CALLing gcWriteBarrier will clobber RA (LR).
 // It does not clobber any other general-purpose registers,

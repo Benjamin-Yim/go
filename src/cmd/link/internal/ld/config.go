@@ -58,8 +58,8 @@ func (mode *BuildMode) Set(s string) error {
 	return nil
 }
 
-func (mode *BuildMode) String() string {
-	switch *mode {
+func (mode BuildMode) String() string {
+	switch mode {
 	case BuildModeUnset:
 		return "" // avoid showing a default in usage message
 	case BuildModeExe:
@@ -75,7 +75,7 @@ func (mode *BuildMode) String() string {
 	case BuildModePlugin:
 		return "plugin"
 	}
-	return fmt.Sprintf("BuildMode(%d)", uint8(*mode))
+	return fmt.Sprintf("BuildMode(%d)", uint8(mode))
 }
 
 // LinkMode indicates whether an external linker is used for the final link.
@@ -198,7 +198,11 @@ func determineLinkMode(ctxt *Link) {
 			ctxt.LinkMode = LinkExternal
 			via = "via GO_EXTLINK_ENABLED "
 		default:
-			if extNeeded || (iscgo && externalobj) {
+			preferExternal := len(preferlinkext) != 0
+			if preferExternal && ctxt.Debugvlog > 0 {
+				ctxt.Logf("external linking prefer list is %v\n", preferlinkext)
+			}
+			if extNeeded || (iscgo && (externalobj || preferExternal)) {
 				ctxt.LinkMode = LinkExternal
 			} else {
 				ctxt.LinkMode = LinkInternal
@@ -213,7 +217,7 @@ func determineLinkMode(ctxt *Link) {
 		}
 	case LinkExternal:
 		switch {
-		case buildcfg.GOARCH == "ppc64" && buildcfg.GOOS != "aix":
+		case buildcfg.GOARCH == "ppc64" && buildcfg.GOOS == "linux":
 			Exitf("external linking not supported for %s/ppc64", buildcfg.GOOS)
 		}
 	}

@@ -16,9 +16,11 @@ import (
 	"fmt"
 	"internal/testenv"
 	"math/big"
+	"os/exec"
 	"reflect"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +49,18 @@ var verifyTests = []verifyTest{
 		roots:         []string{gtsRoot},
 		currentTime:   1677615892,
 		dnsName:       "www.google.com",
+
+		expectedChains: [][]string{
+			{"www.google.com", "GTS CA 1C3", "GTS Root R1"},
+		},
+	},
+	{
+		name:          "Valid (fqdn)",
+		leaf:          googleLeaf,
+		intermediates: []string{gtsIntermediate},
+		roots:         []string{gtsRoot},
+		currentTime:   1677615892,
+		dnsName:       "www.google.com.",
 
 		expectedChains: [][]string{
 			{"www.google.com", "GTS CA 1C3", "GTS Root R1"},
@@ -356,7 +370,7 @@ var verifyTests = []verifyTest{
 		},
 	},
 	{
-		// When there are two parents, one with a incorrect subject but matching SKID
+		// When there are two parents, one with an incorrect subject but matching SKID
 		// and one with a correct subject but missing SKID, the latter should be
 		// considered as a possible parent.
 		leaf:        leafMatchingAKIDMatchingIssuer,
@@ -500,22 +514,21 @@ func testVerify(t *testing.T, test verifyTest, useSystemRoots bool) {
 		return true
 	}
 
-	// Every expected chain should match 1 returned chain
+	// Every expected chain should match one (or more) returned chain. We tolerate multiple
+	// matches, as due to root store semantics it is plausible that (at least on the system
+	// verifiers) multiple identical (looking) chains may be returned when two roots with the
+	// same subject are present.
 	for _, expectedChain := range test.expectedChains {
-		nChainMatched := 0
+		var match bool
 		for _, chain := range chains {
 			if doesMatch(expectedChain, chain) {
-				nChainMatched++
+				match = true
+				break
 			}
 		}
 
-		if nChainMatched != 1 {
-			t.Errorf("Got %v matches instead of %v for expected chain %v", nChainMatched, 1, expectedChain)
-			for _, chain := range chains {
-				if doesMatch(expectedChain, chain) {
-					t.Errorf("\t matched %v", chainToDebugString(chain))
-				}
-			}
+		if !match {
+			t.Errorf("No match found for %v", expectedChain)
 		}
 	}
 
@@ -1856,17 +1869,40 @@ func TestSystemRootsErrorUnwrap(t *testing.T) {
 	}
 }
 
+func macosMajorVersion(t *testing.T) (int, error) {
+	cmd := testenv.Command(t, "sw_vers", "-productVersion")
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok && len(ee.Stderr) > 0 {
+			return 0, fmt.Errorf("%v: %v\n%s", cmd, err, ee.Stderr)
+		}
+		return 0, fmt.Errorf("%v: %v", cmd, err)
+	}
+	before, _, ok := strings.Cut(string(out), ".")
+	major, err := strconv.Atoi(before)
+	if !ok || err != nil {
+		return 0, fmt.Errorf("%v: unexpected output: %q", cmd, out)
+	}
+
+	return major, nil
+}
+
 func TestIssue51759(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("only affects darwin")
 	}
-	builder := testenv.Builder()
-	if builder == "" {
-		t.Skip("only run this test on the builders, as we have no reasonable way to gate tests on macOS versions elsewhere")
-	}
-	if builder == "darwin-amd64-10_14" || builder == "darwin-amd64-10_15" {
+
+	testenv.MustHaveExecPath(t, "sw_vers")
+	if vers, err := macosMajorVersion(t); err != nil {
+		if builder := testenv.Builder(); builder != "" {
+			t.Fatalf("unable to determine macOS version: %s", err)
+		} else {
+			t.Skip("unable to determine macOS version")
+		}
+	} else if vers < 11 {
 		t.Skip("behavior only enforced in macOS 11 and after")
 	}
+
 	// badCertData contains a cert that we parse as valid
 	// but that macOS SecCertificateCreateWithData rejects.
 	const badCertData = "0\x82\x01U0\x82\x01\a\xa0\x03\x02\x01\x02\x02\x01\x020\x05\x06\x03+ep0R1P0N\x06\x03U\x04\x03\x13Gderpkey8dc58100b2493614ee1692831a461f3f4dd3f9b3b088e244f887f81b4906ac260\x1e\x17\r220112235755Z\x17\r220313235755Z0R1P0N\x06\x03U\x04\x03\x13Gderpkey8dc58100b2493614ee1692831a461f3f4dd3f9b3b088e244f887f81b4906ac260*0\x05\x06\x03+ep\x03!\x00bA\xd8e\xadW\xcb\xefZ\x89\xb5\"\x1eR\x9d\xba\x0e:\x1042Q@\u007f\xbd\xfb{ks\x04\xd1£\x020\x000\x05\x06\x03+ep\x03A\x00[\xa7\x06y\x86(\x94\x97\x9eLwA\x00\x01x\xaa\xbc\xbd Ê]\n(΅!ف0\xf5\x9a%I\x19<\xffo\xf1\xeaaf@\xb1\xa7\xaf\xfd\xe9R\xc7\x0f\x8d&\xd5\xfc\x0f;Ϙ\x82\x84a\xbc\r"
@@ -1907,10 +1943,17 @@ type trustGraphEdge struct {
 	Subject        string
 	Type           int
 	MutateTemplate func(*Certificate)
+	Constraint     func([]*Certificate) error
+}
+
+type rootDescription struct {
+	Subject        string
+	MutateTemplate func(*Certificate)
+	Constraint     func([]*Certificate) error
 }
 
 type trustGraphDescription struct {
-	Roots []string
+	Roots []rootDescription
 	Leaf  string
 	Graph []trustGraphEdge
 }
@@ -1959,19 +2002,23 @@ func buildTrustGraph(t *testing.T, d trustGraphDescription) (*CertPool, *CertPoo
 
 	certs := map[string]*Certificate{}
 	keys := map[string]crypto.Signer{}
-	roots := []*Certificate{}
+	rootPool := NewCertPool()
 	for _, r := range d.Roots {
 		k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
 			t.Fatalf("failed to generate test key: %s", err)
 		}
-		root := genCertEdge(t, r, k, nil, rootCertificate, nil, nil)
-		roots = append(roots, root)
-		certs[r] = root
-		keys[r] = k
+		root := genCertEdge(t, r.Subject, k, r.MutateTemplate, rootCertificate, nil, nil)
+		if r.Constraint != nil {
+			rootPool.AddCertWithConstraint(root, r.Constraint)
+		} else {
+			rootPool.AddCert(root)
+		}
+		certs[r.Subject] = root
+		keys[r.Subject] = k
 	}
 
-	intermediates := []*Certificate{}
+	intermediatePool := NewCertPool()
 	var leaf *Certificate
 	for _, e := range d.Graph {
 		issuerCert, ok := certs[e.Issuer]
@@ -1997,16 +2044,12 @@ func buildTrustGraph(t *testing.T, d trustGraphDescription) (*CertPool, *CertPoo
 		if e.Subject == d.Leaf {
 			leaf = cert
 		} else {
-			intermediates = append(intermediates, cert)
+			if e.Constraint != nil {
+				intermediatePool.AddCertWithConstraint(cert, e.Constraint)
+			} else {
+				intermediatePool.AddCert(cert)
+			}
 		}
-	}
-
-	rootPool, intermediatePool := NewCertPool(), NewCertPool()
-	for i := len(roots) - 1; i >= 0; i-- {
-		rootPool.AddCert(roots[i])
-	}
-	for i := len(intermediates) - 1; i >= 0; i-- {
-		intermediatePool.AddCert(intermediates[i])
 	}
 
 	return rootPool, intermediatePool, leaf
@@ -2060,7 +2103,7 @@ func TestPathBuilding(t *testing.T) {
 			//       +----+
 			name: "bad EKU",
 			graph: trustGraphDescription{
-				Roots: []string{"root"},
+				Roots: []rootDescription{{Subject: "root"}},
 				Leaf:  "leaf",
 				Graph: []trustGraphEdge{
 					{
@@ -2136,7 +2179,7 @@ func TestPathBuilding(t *testing.T) {
 			//       +----+
 			name: "bad EKU",
 			graph: trustGraphDescription{
-				Roots: []string{"root"},
+				Roots: []rootDescription{{Subject: "root"}},
 				Leaf:  "leaf",
 				Graph: []trustGraphEdge{
 					{
@@ -2218,7 +2261,7 @@ func TestPathBuilding(t *testing.T) {
 			//            +----+
 			name: "all paths",
 			graph: trustGraphDescription{
-				Roots: []string{"root"},
+				Roots: []rootDescription{{Subject: "root"}},
 				Leaf:  "leaf",
 				Graph: []trustGraphEdge{
 					{
@@ -2282,7 +2325,7 @@ func TestPathBuilding(t *testing.T) {
 			//       +----+
 			name: "ignore cross-sig loops",
 			graph: trustGraphDescription{
-				Roots: []string{"root"},
+				Roots: []rootDescription{{Subject: "root"}},
 				Leaf:  "leaf",
 				Graph: []trustGraphEdge{
 					{
@@ -2335,7 +2378,7 @@ func TestPathBuilding(t *testing.T) {
 			// the leaf has SANs.
 			name: "leaf with same subject, key, as parent but with SAN",
 			graph: trustGraphDescription{
-				Roots: []string{"root"},
+				Roots: []rootDescription{{Subject: "root"}},
 				Leaf:  "root",
 				Graph: []trustGraphEdge{
 					{
@@ -2357,7 +2400,7 @@ func TestPathBuilding(t *testing.T) {
 			// through C should be ignored, because it has invalid EKU nesting.
 			name: "ignore invalid EKU path",
 			graph: trustGraphDescription{
-				Roots: []string{"root"},
+				Roots: []rootDescription{{Subject: "root"}},
 				Leaf:  "leaf",
 				Graph: []trustGraphEdge{
 					{
@@ -2400,6 +2443,142 @@ func TestPathBuilding(t *testing.T) {
 				"CN=leaf -> CN=inter b -> CN=inter a -> CN=root",
 			},
 		},
+		{
+			// A name constraint on the root should apply to any names that appear
+			// on the intermediate, meaning there is no valid chain.
+			name: "constrained root, invalid intermediate",
+			graph: trustGraphDescription{
+				Roots: []rootDescription{
+					{
+						Subject: "root",
+						MutateTemplate: func(t *Certificate) {
+							t.PermittedDNSDomains = []string{"example.com"}
+						},
+					},
+				},
+				Leaf: "leaf",
+				Graph: []trustGraphEdge{
+					{
+						Issuer:  "root",
+						Subject: "inter",
+						Type:    intermediateCertificate,
+						MutateTemplate: func(t *Certificate) {
+							t.DNSNames = []string{"beep.com"}
+						},
+					},
+					{
+						Issuer:  "inter",
+						Subject: "leaf",
+						Type:    leafCertificate,
+						MutateTemplate: func(t *Certificate) {
+							t.DNSNames = []string{"www.example.com"}
+						},
+					},
+				},
+			},
+			expectedErr: "x509: a root or intermediate certificate is not authorized to sign for this name: DNS name \"beep.com\" is not permitted by any constraint",
+		},
+		{
+			// A name constraint on the intermediate does not apply to the intermediate
+			// itself, so this is a valid chain.
+			name: "constrained intermediate, non-matching SAN",
+			graph: trustGraphDescription{
+				Roots: []rootDescription{{Subject: "root"}},
+				Leaf:  "leaf",
+				Graph: []trustGraphEdge{
+					{
+						Issuer:  "root",
+						Subject: "inter",
+						Type:    intermediateCertificate,
+						MutateTemplate: func(t *Certificate) {
+							t.DNSNames = []string{"beep.com"}
+							t.PermittedDNSDomains = []string{"example.com"}
+						},
+					},
+					{
+						Issuer:  "inter",
+						Subject: "leaf",
+						Type:    leafCertificate,
+						MutateTemplate: func(t *Certificate) {
+							t.DNSNames = []string{"www.example.com"}
+						},
+					},
+				},
+			},
+			expectedChains: []string{"CN=leaf -> CN=inter -> CN=root"},
+		},
+		{
+			// A code constraint on the root, applying to one of two intermediates in the graph, should
+			// result in only one valid chain.
+			name: "code constrained root, two paths, one valid",
+			graph: trustGraphDescription{
+				Roots: []rootDescription{{Subject: "root", Constraint: func(chain []*Certificate) error {
+					for _, c := range chain {
+						if c.Subject.CommonName == "inter a" {
+							return errors.New("bad")
+						}
+					}
+					return nil
+				}}},
+				Leaf: "leaf",
+				Graph: []trustGraphEdge{
+					{
+						Issuer:  "root",
+						Subject: "inter a",
+						Type:    intermediateCertificate,
+					},
+					{
+						Issuer:  "root",
+						Subject: "inter b",
+						Type:    intermediateCertificate,
+					},
+					{
+						Issuer:  "inter a",
+						Subject: "inter c",
+						Type:    intermediateCertificate,
+					},
+					{
+						Issuer:  "inter b",
+						Subject: "inter c",
+						Type:    intermediateCertificate,
+					},
+					{
+						Issuer:  "inter c",
+						Subject: "leaf",
+						Type:    leafCertificate,
+					},
+				},
+			},
+			expectedChains: []string{"CN=leaf -> CN=inter c -> CN=inter b -> CN=root"},
+		},
+		{
+			// A code constraint on the root, applying to the only path, should result in an error.
+			name: "code constrained root, one invalid path",
+			graph: trustGraphDescription{
+				Roots: []rootDescription{{Subject: "root", Constraint: func(chain []*Certificate) error {
+					for _, c := range chain {
+						if c.Subject.CommonName == "leaf" {
+							return errors.New("bad")
+						}
+					}
+					return nil
+				}}},
+				Leaf: "leaf",
+				Graph: []trustGraphEdge{
+					{
+						Issuer:  "root",
+						Subject: "inter",
+						Type:    intermediateCertificate,
+					},
+					{
+						Issuer:  "inter",
+						Subject: "leaf",
+						Type:    leafCertificate,
+					},
+				},
+			},
+			expectedErr: "x509: certificate signed by unknown authority (possibly because of \"bad\" while trying to verify candidate authority certificate \"root\")",
+		},
 	}
 
 	for _, tc := range tests {
@@ -2411,6 +2590,9 @@ func TestPathBuilding(t *testing.T) {
 			})
 			if err != nil && err.Error() != tc.expectedErr {
 				t.Fatalf("unexpected error: got %q, want %q", err, tc.expectedErr)
+			}
+			if len(tc.expectedChains) == 0 {
+				return
 			}
 			gotChains := chainsToStrings(chains)
 			if !reflect.DeepEqual(gotChains, tc.expectedChains) {

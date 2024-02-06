@@ -2059,6 +2059,9 @@ var fmaC = []struct{ x, y, z, want float64 }{
 
 	// Special
 	{0, 0, 0, 0},
+	{Copysign(0, -1), 0, 0, 0},
+	{0, 0, Copysign(0, -1), 0},
+	{Copysign(0, -1), 0, Copysign(0, -1), Copysign(0, -1)},
 	{-1.1754226043408471e-38, NaN(), Inf(0), NaN()},
 	{0, 0, 2.22507385643494e-308, 2.22507385643494e-308},
 	{-8.65697792e+09, NaN(), -7.516192799999999e+09, NaN()},
@@ -2077,6 +2080,10 @@ var fmaC = []struct{ x, y, z, want float64 }{
 	{4.612811918325842e+18, 1.4901161193847641e-08, 2.6077032311277997e-08, 6.873625395187494e+10},
 	{-9.094947033611148e-13, 4.450691014249257e-308, 2.086006742350485e-308, 2.086006742346437e-308},
 	{-7.751454006381804e-05, 5.588653777189071e-308, -2.2207280111272877e-308, -2.2211612130544025e-308},
+
+	// Issue #61130
+	{-1, 1, 1, 0},
+	{1, 1, -1, 0},
 }
 
 var sqrt32 = []float32{
@@ -2092,67 +2099,6 @@ var sqrt32 = []float32{
 	7.7388724745781045e+00,
 	-2.7688005719200159e-01,
 	-5.0106036182710749e+00,
-}
-
-type compareTest[F float32 | float64] struct {
-	x, y F
-	want int
-}
-
-func compareCasesFloat64() []compareTest[float64] {
-	zero, nan, inf := 0.0, NaN(), Inf(0)
-
-	// construct -NaN manually from its bit representation,
-	// since IEEE doesn't mandate negate(NaN) change the sign bit
-	unegnan := Float64bits(nan)
-	unegnan ^= 1 << 63
-	negnan := Float64frombits(unegnan)
-	return []compareTest[float64]{
-		{negnan, -inf, -1},
-		{-inf, negnan, 1},
-		{-inf, -Pi, -1},
-		{-Pi, -inf, 1},
-		{-Pi, -zero, -1},
-		{-zero, -Pi, 1},
-		{-zero, 0, -1},
-		{0, -zero, 1},
-		{0, Pi, -1},
-		{Pi, 0, 1},
-		{Pi, inf, -1},
-		{inf, Pi, 1},
-		{inf, nan, -1},
-		{nan, inf, 1},
-		{Pi, Pi, 0},
-		{negnan, negnan, 0},
-	}
-}
-
-func compareCasesFloat32() []compareTest[float32] {
-	zero, nan, inf := float32(0.0), float32(NaN()), float32(Inf(0))
-
-	// construct -NaN manually from its bit representation,
-	// since IEEE doesn't mandate negate(NaN) change the sign bit
-	unegnan := Float32bits(nan)
-	unegnan ^= 1 << 31
-	negnan := Float32frombits(unegnan)
-	return []compareTest[float32]{
-		{negnan, -inf, -1},
-		{-inf, negnan, 1},
-		{-inf, -Pi, -1},
-		{-Pi, -inf, 1},
-		{-Pi, -zero, -1},
-		{-zero, -Pi, 1},
-		{-zero, 0, -1},
-		{0, -zero, 1},
-		{0, Pi, -1},
-		{Pi, 0, 1},
-		{Pi, inf, -1},
-		{inf, Pi, 1},
-		{inf, nan, -1},
-		{nan, inf, 1},
-		{Pi, Pi, 0},
-		{negnan, negnan, 0},
-	}
 }
 
 func tolerance(a, b, e float64) bool {
@@ -2318,22 +2264,6 @@ func TestCeil(t *testing.T) {
 	for i := 0; i < len(vfceilSC); i++ {
 		if f := Ceil(vfceilSC[i]); !alike(ceilSC[i], f) {
 			t.Errorf("Ceil(%g) = %g, want %g", vfceilSC[i], f, ceilSC[i])
-		}
-	}
-}
-
-func TestCompare(t *testing.T) {
-	// -NaN < -∞ < -3.14 < -0 < 0 < 3.14 < ∞ < NaN
-	for _, c := range compareCasesFloat64() {
-		cmp := Compare(c.x, c.y)
-		if cmp != c.want {
-			t.Errorf("Compare(%v, %v) = %d, want %v", c.x, c.y, cmp, c.want)
-		}
-	}
-	for _, c := range compareCasesFloat32() {
-		cmp := Compare32(c.x, c.y)
-		if cmp != c.want {
-			t.Errorf("Compare32(%v, %v) = %d, want %v", c.x, c.y, cmp, c.want)
 		}
 	}
 }
@@ -3176,6 +3106,45 @@ func TestFMA(t *testing.T) {
 	}
 }
 
+//go:noinline
+func fmsub(x, y, z float64) float64 {
+	return FMA(x, y, -z)
+}
+
+//go:noinline
+func fnmsub(x, y, z float64) float64 {
+	return FMA(-x, y, z)
+}
+
+//go:noinline
+func fnmadd(x, y, z float64) float64 {
+	return FMA(-x, y, -z)
+}
+
+func TestFMANegativeArgs(t *testing.T) {
+	// Some architectures have instructions for fused multiply-subtract and
+	// also negated variants of fused multiply-add and subtract. This test
+	// aims to check that the optimizations that generate those instructions
+	// are applied correctly, if they exist.
+	for _, c := range fmaC {
+		want := PortableFMA(c.x, c.y, -c.z)
+		got := fmsub(c.x, c.y, c.z)
+		if !alike(got, want) {
+			t.Errorf("FMA(%g, %g, -(%g)) == %g, want %g", c.x, c.y, c.z, got, want)
+		}
+		want = PortableFMA(-c.x, c.y, c.z)
+		got = fnmsub(c.x, c.y, c.z)
+		if !alike(got, want) {
+			t.Errorf("FMA(-(%g), %g, %g) == %g, want %g", c.x, c.y, c.z, got, want)
+		}
+		want = PortableFMA(-c.x, c.y, -c.z)
+		got = fnmadd(c.x, c.y, c.z)
+		if !alike(got, want) {
+			t.Errorf("FMA(-(%g), %g, -(%g)) == %g, want %g", c.x, c.y, c.z, got, want)
+		}
+	}
+}
+
 // Check that math functions of high angle values
 // return accurate results. [Since (vf[i] + large) - large != vf[i],
 // testing for Trig(vf[i] + large) == Trig(vf[i]), where large is
@@ -3395,23 +3364,6 @@ func BenchmarkCeil(b *testing.B) {
 		x = Ceil(.5)
 	}
 	GlobalF = x
-}
-
-func BenchmarkCompare(b *testing.B) {
-	x := 0
-	for i := 0; i < b.N; i++ {
-		x = Compare(GlobalF, 1.5)
-	}
-	GlobalI = x
-}
-
-func BenchmarkCompare32(b *testing.B) {
-	x := 0
-	globalF32 := float32(GlobalF)
-	for i := 0; i < b.N; i++ {
-		x = Compare32(globalF32, 1.5)
-	}
-	GlobalI = x
 }
 
 var copysignNeg = -1.0

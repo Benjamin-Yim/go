@@ -364,11 +364,21 @@ ok:
 	RET
 
 TEXT runtime·fcntl_trampoline(SB),NOSPLIT,$0
-	MOVL	4(DI), SI		// arg 2 cmd
-	MOVL	8(DI), DX		// arg 3 arg
-	MOVL	0(DI), DI		// arg 1 fd
+	MOVQ	DI, BX
+	MOVL	0(BX), DI		// arg 1 fd
+	MOVL	4(BX), SI		// arg 2 cmd
+	MOVL	8(BX), DX		// arg 3 arg
 	XORL	AX, AX			// vararg: say "no float args"
 	CALL	libc_fcntl(SB)
+	XORL	DX, DX
+	CMPQ	AX, $-1
+	JNE	noerr
+	CALL	libc_error(SB)
+	MOVL	(AX), DX
+	MOVL	$-1, AX
+noerr:
+	MOVL	AX, 12(BX)
+	MOVL	DX, 16(BX)
 	RET
 
 // mstart_stub is the first function executed on a new thread started by pthread_create.
@@ -781,4 +791,30 @@ TEXT runtime·syscall_x509(SB),NOSPLIT,$16
 	MOVQ	AX, (7*8)(DI) // r1
 
 	XORL	AX, AX        // no error (it's ignored anyway)
+	RET
+
+TEXT runtime·issetugid_trampoline(SB),NOSPLIT,$0
+	CALL	libc_issetugid(SB)
+	RET
+
+// mach_vm_region_trampoline calls mach_vm_region from libc.
+TEXT runtime·mach_vm_region_trampoline(SB),NOSPLIT,$0
+	MOVQ	0(DI), SI // address
+	MOVQ	8(DI), DX // size
+	MOVL	16(DI), CX // flavor
+	MOVQ	24(DI), R8 // info
+	MOVQ	32(DI), R9 // count
+	MOVQ	40(DI), R10 // object_name
+	MOVQ	$libc_mach_task_self_(SB), DI
+	MOVL	0(DI), DI
+	CALL	libc_mach_vm_region(SB)
+	RET
+
+// proc_regionfilename_trampoline calls proc_regionfilename.
+TEXT runtime·proc_regionfilename_trampoline(SB),NOSPLIT,$0
+	MOVQ	8(DI), SI // address
+	MOVQ	16(DI), DX // buffer
+	MOVQ	24(DI), CX // buffer_size
+	MOVQ	0(DI), DI // pid
+	CALL	libc_proc_regionfilename(SB)
 	RET

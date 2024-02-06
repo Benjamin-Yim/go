@@ -42,7 +42,7 @@ type Context struct {
 	Dir string
 
 	CgoEnabled  bool   // whether cgo files are included
-	UseAllFiles bool   // use files regardless of +build lines, file names
+	UseAllFiles bool   // use files regardless of //go:build lines, file names
 	Compiler    string // compiler to assume when computing target paths
 
 	// The build, tool, and release tags specify build constraints
@@ -619,6 +619,11 @@ func (ctxt *Context) saveCgo(filename string, di *build.Package, text string) er
 		//
 		line = strings.TrimSpace(line)
 		if len(line) < 5 || line[:4] != "#cgo" || (line[4] != ' ' && line[4] != '\t') {
+			continue
+		}
+
+		// #cgo (nocallback|noescape) <function name>
+		if fields := strings.Fields(line); len(fields) == 3 && (fields[1] == "nocallback" || fields[1] == "noescape") {
 			continue
 		}
 

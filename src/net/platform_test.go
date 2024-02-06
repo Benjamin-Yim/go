@@ -57,11 +57,6 @@ func testableNetwork(network string) bool {
 		switch runtime.GOOS {
 		case "aix", "android", "darwin", "ios", "plan9", "windows":
 			return false
-		case "netbsd":
-			// It passes on amd64 at least. 386 fails (Issue 22927). arm is unknown.
-			if runtime.GOARCH == "386" {
-				return false
-			}
 		}
 	}
 	switch net {
@@ -170,7 +165,7 @@ func condFatalf(t *testing.T, network string, format string, args ...any) {
 	// A few APIs like File and Read/WriteMsg{UDP,IP} are not
 	// fully implemented yet on Plan 9 and Windows.
 	switch runtime.GOOS {
-	case "windows":
+	case "windows", "js", "wasip1":
 		if network == "file+net" {
 			t.Logf(format, args...)
 			return

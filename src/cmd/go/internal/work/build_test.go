@@ -6,6 +6,7 @@ package work
 
 import (
 	"fmt"
+	"internal/testenv"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -221,22 +222,13 @@ func pkgImportPath(pkgpath string) *load.Package {
 // directory.
 // See https://golang.org/issue/18878.
 func TestRespectSetgidDir(t *testing.T) {
-	switch runtime.GOOS {
-	case "ios":
-		t.Skip("can't set SetGID bit with chmod on iOS")
-	case "windows", "plan9":
-		t.Skip("chown/chmod setgid are not supported on Windows or Plan 9")
-	}
-
-	var b Builder
-
 	// Check that `cp` is called instead of `mv` by looking at the output
-	// of `(*Builder).ShowCmd` afterwards as a sanity check.
+	// of `(*Shell).ShowCmd` afterwards as a sanity check.
 	cfg.BuildX = true
 	var cmdBuf strings.Builder
-	b.Print = func(a ...any) (int, error) {
+	sh := NewShell("", func(a ...any) (int, error) {
 		return cmdBuf.WriteString(fmt.Sprint(a...))
-	}
+	})
 
 	setgiddir, err := os.MkdirTemp("", "SetGroupID")
 	if err != nil {
@@ -250,12 +242,23 @@ func TestRespectSetgidDir(t *testing.T) {
 	// the new temporary directory.
 	err = os.Chown(setgiddir, os.Getuid(), os.Getgid())
 	if err != nil {
+		if testenv.SyscallIsNotSupported(err) {
+			t.Skip("skipping: chown is not supported on " + runtime.GOOS)
+		}
 		t.Fatal(err)
 	}
 
 	// Change setgiddir's permissions to include the SetGID bit.
 	if err := os.Chmod(setgiddir, 0755|fs.ModeSetgid); err != nil {
+		if testenv.SyscallIsNotSupported(err) {
+			t.Skip("skipping: chmod is not supported on " + runtime.GOOS)
+		}
 		t.Fatal(err)
+	}
+	if fi, err := os.Stat(setgiddir); err != nil {
+		t.Fatal(err)
+	} else if fi.Mode()&fs.ModeSetgid == 0 {
+		t.Skip("skipping: Chmod ignored ModeSetgid on " + runtime.GOOS)
 	}
 
 	pkgfile, err := os.CreateTemp("", "pkgfile")
@@ -266,12 +269,12 @@ func TestRespectSetgidDir(t *testing.T) {
 	defer pkgfile.Close()
 
 	dirGIDFile := filepath.Join(setgiddir, "setgid")
-	if err := b.moveOrCopyFile(dirGIDFile, pkgfile.Name(), 0666, true); err != nil {
+	if err := sh.moveOrCopyFile(dirGIDFile, pkgfile.Name(), 0666, true); err != nil {
 		t.Fatalf("moveOrCopyFile: %v", err)
 	}
 
 	got := strings.TrimSpace(cmdBuf.String())
-	want := b.fmtcmd("", "cp %s %s", pkgfile.Name(), dirGIDFile)
+	want := sh.fmtCmd("", "cp %s %s", pkgfile.Name(), dirGIDFile)
 	if got != want {
 		t.Fatalf("moveOrCopyFile(%q, %q): want %q, got %q", dirGIDFile, pkgfile.Name(), want, got)
 	}

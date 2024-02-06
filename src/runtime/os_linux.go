@@ -220,11 +220,13 @@ func newosproc0(stacksize uintptr, fn unsafe.Pointer) {
 }
 
 const (
-	_AT_NULL   = 0  // End of vector
-	_AT_PAGESZ = 6  // System physical page size
-	_AT_HWCAP  = 16 // hardware capability bit vector
-	_AT_RANDOM = 25 // introduced in 2.6.29
-	_AT_HWCAP2 = 26 // hardware capability bit vector 2
+	_AT_NULL     = 0  // End of vector
+	_AT_PAGESZ   = 6  // System physical page size
+	_AT_PLATFORM = 15 // string identifying platform
+	_AT_HWCAP    = 16 // hardware capability bit vector
+	_AT_SECURE   = 23 // secure mode boolean
+	_AT_RANDOM   = 25 // introduced in 2.6.29
+	_AT_HWCAP2   = 26 // hardware capability bit vector 2
 )
 
 var procAuxv = []byte("/proc/self/auxv\x00")
@@ -293,9 +295,8 @@ func sysargs(argc int32, argv **byte) {
 	auxv = auxvreadbuf[: pairs*2 : pairs*2]
 }
 
-// startupRandomData holds random bytes initialized at startup. These come from
-// the ELF AT_RANDOM auxiliary vector.
-var startupRandomData []byte
+// secureMode holds the value of AT_SECURE passed in the auxiliary vector.
+var secureMode bool
 
 func sysauxv(auxv []uintptr) (pairs int) {
 	var i int
@@ -305,10 +306,13 @@ func sysauxv(auxv []uintptr) (pairs int) {
 		case _AT_RANDOM:
 			// The kernel provides a pointer to 16-bytes
 			// worth of random data.
-			startupRandomData = (*[16]byte)(unsafe.Pointer(val))[:]
+			startupRand = (*[16]byte)(unsafe.Pointer(val))[:]
 
 		case _AT_PAGESZ:
 			physPageSize = val
+
+		case _AT_SECURE:
+			secureMode = val == 1
 		}
 
 		archauxv(tag, val)
@@ -345,41 +349,18 @@ func getHugePageSize() uintptr {
 
 // 系统初始化
 func osinit() {
-	ncpu = getproccount()                // 获取 CPU 数量
+	ncpu = getproccount() // 获取 CPU 数量
 	physHugePageSize = getHugePageSize() // 获取物理页大小
-	if iscgo {
-		// #42494 glibc and musl reserve some signals for
-		// internal use and require they not be blocked by
-		// the rest of a normal C runtime. When the go runtime
-		// blocks...unblocks signals, temporarily, the blocked
-		// interval of time is generally very short. As such,
-		// these expectations of *libc code are mostly met by
-		// the combined go+cgo system of threads. However,
-		// when go causes a thread to exit, via a return from
-		// mstart(), the combined runtime can deadlock if
-		// these signals are blocked. Thus, don't block these
-		// signals when exiting threads.
-		// - glibc: SIGCANCEL (32), SIGSETXID (33)
-		// - musl: SIGTIMER (32), SIGCANCEL (33), SIGSYNCCALL (34)
-		sigdelset(&sigsetAllExiting, 32)
-		sigdelset(&sigsetAllExiting, 33)
-		sigdelset(&sigsetAllExiting, 34)
-	}
 	osArchInit()
 }
 
 var urandom_dev = []byte("/dev/urandom\x00")
 
-func getRandomData(r []byte) {
-	if startupRandomData != nil {
-		n := copy(r, startupRandomData)
-		extendRandom(r, n)
-		return
-	}
+func readRandom(r []byte) int {
 	fd := open(&urandom_dev[0], 0 /* O_RDONLY */, 0)
 	n := read(fd, unsafe.Pointer(&r[0]), int32(len(r)))
 	closefd(fd)
-	extendRandom(r, int(n))
+	return int(n)
 }
 
 func goenvs() {
@@ -423,6 +404,7 @@ func minit() {
 //go:nosplit
 func unminit() {
 	unminitSignals()
+	getg().m.procid = 0
 }
 
 // Called from exitm, but not from drop, to undo the effect of thread-owned
@@ -434,7 +416,7 @@ func mdestroy(mp *m) {
 //#define sa_handler k_sa_handler
 //#endif
 
-func sigreturn()
+func sigreturn__sigaction()
 func sigtramp() // Called via C ABI
 func cgoSigtramp()
 
@@ -478,6 +460,12 @@ func osyield_no_g() {
 
 func pipe2(flags int32) (r, w int32, errno int32)
 
+//go:nosplit
+func fcntl(fd, cmd, arg int32) (ret int32, errno int32) {
+	r, _, err := syscall.Syscall6(syscall.SYS_FCNTL, uintptr(fd), uintptr(cmd), uintptr(arg), 0, 0, 0)
+	return int32(r), int32(err)
+}
+
 const (
 	_si_max_size    = 128
 	_sigev_max_size = 64
@@ -493,7 +481,7 @@ func setsig(i uint32, fn uintptr) {
 	// should not be used". x86_64 kernel requires it. Only use it on
 	// x86.
 	if GOARCH == "386" || GOARCH == "amd64" {
-		sa.sa_restorer = abi.FuncPCABI0(sigreturn)
+		sa.sa_restorer = abi.FuncPCABI0(sigreturn__sigaction)
 	}
 	// fn 等于 sighandler 的时候，调用的函数会被替换成 sigtramp
 	if fn == abi.FuncPCABIInternal(sighandler) { // abi.FuncPCABIInternal(sighandler) matches the callers in signal_unix.go
@@ -674,7 +662,7 @@ func setThreadCPUProfiler(hz int32) {
 	// activates may do a couple milliseconds of GC-related work and nothing
 	// else in the few seconds that the profiler observes.
 	spec := new(itimerspec)
-	spec.it_value.setNsec(1 + int64(fastrandn(uint32(1e9/hz))))
+	spec.it_value.setNsec(1 + int64(cheaprandn(uint32(1e9/hz))))
 	spec.it_interval.setNsec(1e9 / int64(hz))
 
 	var timerid int32
@@ -744,7 +732,7 @@ func syscall_runtime_doAllThreadsSyscall(trap, a1, a2, a3, a4, a5, a6 uintptr) (
 	// N.B. Internally, this function does not depend on STW to
 	// successfully change every thread. It is only needed for user
 	// expectations, per above.
-	stopTheWorld("doAllThreadsSyscall")
+	stw := stopTheWorld(stwAllThreadsSyscall)
 
 	// This function depends on several properties:
 	//
@@ -788,7 +776,7 @@ func syscall_runtime_doAllThreadsSyscall(trap, a1, a2, a3, a4, a5, a6 uintptr) (
 	if errno != 0 {
 		releasem(getg().m)
 		allocmLock.unlock()
-		startTheWorld()
+		startTheWorld(stw)
 		return r1, r2, errno
 	}
 
@@ -873,7 +861,7 @@ func syscall_runtime_doAllThreadsSyscall(trap, a1, a2, a3, a4, a5, a6 uintptr) (
 
 	releasem(getg().m)
 	allocmLock.unlock()
-	startTheWorld()
+	startTheWorld(stw)
 
 	return r1, r2, errno
 }
