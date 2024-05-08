@@ -13,9 +13,13 @@ TEXT ·sigpanic0(SB),NOSPLIT,$0-0
 TEXT ·mapinitnoop<ABIInternal>(SB),NOSPLIT,$0-0
 	RET
 
+#ifndef GOARCH_386
+#ifndef GOARCH_arm
 #ifndef GOARCH_amd64
 #ifndef GOARCH_arm64
 #ifndef GOARCH_loong64
+#ifndef GOARCH_mips
+#ifndef GOARCH_mipsle
 #ifndef GOARCH_mips64
 #ifndef GOARCH_mips64le
 #ifndef GOARCH_ppc64
@@ -26,6 +30,10 @@ TEXT ·mapinitnoop<ABIInternal>(SB),NOSPLIT,$0-0
 // stub to appease shared build mode.
 TEXT ·switchToCrashStack0<ABIInternal>(SB),NOSPLIT,$0-0
 	UNDEF
+#endif
+#endif
+#endif
+#endif
 #endif
 #endif
 #endif

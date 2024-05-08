@@ -7,8 +7,8 @@ package runtime
 import (
 	"internal/abi"
 	"internal/goarch"
+	"internal/runtime/atomic"
 	"internal/runtime/syscall"
-	"runtime/internal/atomic"
 	"unsafe"
 )
 
@@ -412,9 +412,9 @@ func unminit() {
 func mdestroy(mp *m) {
 }
 
-//#ifdef GOARCH_386
-//#define sa_handler k_sa_handler
-//#endif
+// #ifdef GOARCH_386
+// #define sa_handler k_sa_handler
+// #endif
 
 func sigreturn__sigaction()
 func sigtramp() // Called via C ABI
@@ -905,4 +905,10 @@ const (
 func (c *sigctxt) sigFromUser() bool {
 	code := int32(c.sigcode())
 	return code == _SI_USER || code == _SI_TKILL
+}
+
+//go:nosplit
+func mprotect(addr unsafe.Pointer, n uintptr, prot int32) (ret int32, errno int32) {
+	r, _, err := syscall.Syscall6(syscall.SYS_MPROTECT, uintptr(addr), n, uintptr(prot), 0, 0, 0)
+	return int32(r), int32(err)
 }

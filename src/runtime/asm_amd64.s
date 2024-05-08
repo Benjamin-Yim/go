@@ -512,7 +512,11 @@ goodm:
 	MOVQ	(g_sched+gobuf_sp)(R14), SP	// sp = g0.sched.sp
 	PUSHQ	AX	// fn 的参数 g入栈。open up space for fn's arg spill slot
 	MOVQ	0(DX), R12 // func 存放到 R12
-	CALL	R12		// 调用指定的函数 fn(g)
+	CALL	R12		// fn(g) // func 存放到 R12
+	// The Windows native stack unwinder incorrectly classifies the next instruction
+	// as part of the function epilogue, producing a wrong call stack.
+	// Add a NOP to work around this issue. See go.dev/issue/67007.
+	BYTE	$0x90
 	POPQ	AX
 	JMP	runtime·badmcall2(SB)
 	RET

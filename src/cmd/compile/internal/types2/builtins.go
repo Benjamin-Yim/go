@@ -25,7 +25,7 @@ func (check *Checker) builtin(x *operand, call *syntax.CallExpr, id builtinId) (
 	if hasDots(call) && id != _Append {
 		check.errorf(dddErrPos(call),
 			InvalidDotDotDot,
-			invalidOp+"invalid use of ... with built-in %s", bin.name)
+			invalidOp+"invalid use of ... with built-in %s", quote(bin.name))
 		check.use(argList...)
 		return
 	}
@@ -210,7 +210,7 @@ func (check *Checker) builtin(x *operand, call *syntax.CallExpr, id builtinId) (
 				if id == _Len {
 					code = InvalidLen
 				}
-				check.errorf(x, code, invalidArg+"%s for %s", x, bin.name)
+				check.errorf(x, code, invalidArg+"%s for %s", x, quote(bin.name))
 			}
 			return
 		}
@@ -533,7 +533,7 @@ func (check *Checker) builtin(x *operand, call *syntax.CallExpr, id builtinId) (
 	case _Max, _Min:
 		// max(x, ...)
 		// min(x, ...)
-		check.verifyVersionf(call.Fun, go1_21, bin.name)
+		check.verifyVersionf(call.Fun, go1_21, quote(bin.name))
 
 		op := token.LSS
 		if id == _Max {
@@ -576,7 +576,7 @@ func (check *Checker) builtin(x *operand, call *syntax.CallExpr, id builtinId) (
 		if x.mode != constant_ {
 			x.mode = value
 			// A value must not be untyped.
-			check.assignment(x, &emptyInterface, "argument to "+bin.name)
+			check.assignment(x, &emptyInterface, "argument to "+quote(bin.name))
 			if x.mode == invalid {
 				return
 			}
@@ -641,7 +641,7 @@ func (check *Checker) builtin(x *operand, call *syntax.CallExpr, id builtinId) (
 		if nargs > 0 {
 			params = make([]Type, nargs)
 			for i, a := range args {
-				check.assignment(a, nil, "argument to "+predeclaredFuncs[id].name)
+				check.assignment(a, nil, "argument to "+quote(predeclaredFuncs[id].name))
 				if a.mode == invalid {
 					return
 				}
@@ -908,7 +908,7 @@ func (check *Checker) builtin(x *operand, call *syntax.CallExpr, id builtinId) (
 		// trace is only available in test mode - no need to record signature
 
 	default:
-		unreachable()
+		panic("unreachable")
 	}
 
 	assert(x.mode != invalid)
@@ -947,7 +947,7 @@ func hasVarSize(t Type, seen map[*Named]bool) (varSized bool) {
 	case *Interface:
 		return isTypeParam(t)
 	case *Named, *Union:
-		unreachable()
+		panic("unreachable")
 	}
 	return false
 }
@@ -990,9 +990,9 @@ func (check *Checker) applyTypeFunc(f func(Type) Type, x *operand, id builtinId)
 		case _Complex:
 			code = InvalidComplex
 		default:
-			unreachable()
+			panic("unreachable")
 		}
-		check.softErrorf(x, code, "%s not supported as argument to %s for go1.18 (see go.dev/issue/50937)", x, predeclaredFuncs[id].name)
+		check.softErrorf(x, code, "%s not supported as argument to %s for go1.18 (see go.dev/issue/50937)", x, quote(predeclaredFuncs[id].name))
 
 		// Construct a suitable new type parameter for the result type.
 		// The type parameter is placed in the current package so export/import

@@ -19,7 +19,7 @@ package runtime
 
 import (
 	"internal/abi"
-	"runtime/internal/atomic"
+	"internal/runtime/atomic"
 	"runtime/internal/math"
 	"unsafe"
 )
@@ -34,13 +34,14 @@ type hchan struct {
 	qcount   uint           // 当前队列中的元素数量。total data in the queue
 	dataqsiz uint           //  队列可以容纳的元素数量, 如果为0表示这个channel无缓冲区。size of the circular queue
 	buf      unsafe.Pointer // 队列的缓冲区, 结构是环形队列。points to an array of dataqsiz elements
-	elemsize uint16         // 元素的大小
-	closed   uint32         // 是否已关闭
-	elemtype *_type         // 元素的类型, 判断是否调用写屏障时使用.element type
-	sendx    uint           // 发送元素的序号. send index
-	recvx    uint           // 接收元素的序号. receive index
-	recvq    waitq          // 当前等待从channel接收数据的G的链表(实际类型是sudog的链表). list of recv waiters
-	sendq    waitq          // 当前等待发送数据到channel的G的链表(实际类型是sudog的链表). list of send waiters
+	elemsize uint16 // 元素的大小
+	closed   uint32 // 是否已关闭
+	timer    *timer // timer feeding this chan
+	elemtype *_type // 元素的类型, 判断是否调用写屏障时使用.element type
+	sendx    uint   // 发送元素的序号. send index
+	recvx    uint   // 接收元素的序号. receive index
+	recvq    waitq  // 当前等待从channel接收数据的G的链表(实际类型是sudog的链表). list of recv waiters
+	sendq    waitq  // 当前等待发送数据到channel的G的链表(实际类型是sudog的链表). list of send waiters
 
 	// lock protects all fields in hchan, as well as several
 	// fields in sudogs blocked on this channel.
@@ -96,7 +97,7 @@ func makechan(t *chantype, size int) *hchan {
 		c = (*hchan)(mallocgc(hchanSize, nil, true))
 		// Race detector uses this location for synchronization.
 		c.buf = c.raceaddr()
-	case elem.PtrBytes == 0:
+	case !elem.Pointers():
 		// Elements do not contain pointers.
 		// Allocate hchan and buf in one call.
 		c = (*hchan)(mallocgc(hchanSize+mem, nil, true))
@@ -337,6 +338,35 @@ func send(c *hchan, sg *sudog, ep unsafe.Pointer, unlockf func(), skip int) {
 	// 从发送者拿到数据并唤醒了G后, 就可以从chansend返回了
 }
 
+// timerchandrain removes all elements in channel c's buffer.
+// It reports whether any elements were removed.
+// Because it is only intended for timers, it does not
+// handle waiting senders at all (all timer channels
+// use non-blocking sends to fill the buffer).
+func timerchandrain(c *hchan) bool {
+	// Note: Cannot use empty(c) because we are called
+	// while holding c.timer.sendLock, and empty(c) will
+	// call c.timer.maybeRunChan, which will deadlock.
+	// We are emptying the channel, so we only care about
+	// the count, not about potentially filling it up.
+	if atomic.Loaduint(&c.qcount) == 0 {
+		return false
+	}
+	lock(&c.lock)
+	any := false
+	for c.qcount > 0 {
+		any = true
+		typedmemclr(c.elemtype, chanbuf(c, c.recvx))
+		c.recvx++
+		if c.recvx == c.dataqsiz {
+			c.recvx = 0
+		}
+		c.qcount--
+	}
+	unlock(&c.lock)
+	return any
+}
+
 // Sends and receives on unbuffered or empty-buffered channels are the
 // only operations where one running goroutine writes to the stack of
 // another running goroutine. The GC assumes that stack writes only
@@ -445,11 +475,18 @@ func closechan(c *hchan) {
 }
 
 // empty reports whether a read from c would block (that is, the channel is
-// empty).  It uses a single atomic read of mutable state.
+// empty).  It is atomically correct and sequentially consistent at the moment
+// it returns, but since the channel is unlocked, the channel may become
+// non-empty immediately afterward.
 func empty(c *hchan) bool {
 	// c.dataqsiz is immutable.
 	if c.dataqsiz == 0 {
 		return atomic.Loadp(unsafe.Pointer(&c.sendq.first)) == nil
+	}
+	// c.timer is also immutable (it is set after make(chan) but before any channel operations).
+	// All timer channels have dataqsiz > 0.
+	if c.timer != nil {
+		c.timer.maybeRunChan()
 	}
 	return atomic.Loaduint(&c.qcount) == 0
 }
@@ -489,6 +526,10 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 		}
 		gopark(nil, nil, waitReasonChanReceiveNilChan, traceBlockForever, 2)
 		throw("unreachable")
+	}
+
+	if c.timer != nil {
+		c.timer.maybeRunChan()
 	}
 
 	// Fast path: check for failed non-blocking operation without acquiring the lock.
@@ -596,11 +637,16 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 	mysg.elem = ep // 设置sudog.elem = 指向接收内存的指针
 	mysg.waitlink = nil
 	gp.waiting = mysg // 设置g.waiting = sudog
-	mysg.g = gp       // 设置sudog.g = g
+
+	mysg.g = gp	// 设置sudog.g = g
 	mysg.isSelect = false
 	mysg.c = c // 设置sudog.c = channel
 	gp.param = nil
 	c.recvq.enqueue(mysg) // 把sudog放入channel.recvq
+	if c.timer != nil {
+		blockTimerChan(c)
+	}
+
 	// Signal to anyone trying to shrink our stack that we're about
 	// to park on a channel. The window between when this G's status
 	// changes and when we set gp.activeStackChans is not safe for
@@ -612,6 +658,9 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 	// someone woke us up
 	if mysg != gp.waiting {
 		throw("G waiting list is corrupted")
+	}
+	if c.timer != nil {
+		unblockTimerChan(c)
 	}
 	gp.waiting = nil
 	gp.activeStackChans = false
@@ -757,28 +806,53 @@ func reflect_chanrecv(c *hchan, nb bool, elem unsafe.Pointer) (selected bool, re
 	return chanrecv(c, elem, !nb)
 }
 
-//go:linkname reflect_chanlen reflect.chanlen
-func reflect_chanlen(c *hchan) int {
+func chanlen(c *hchan) int {
 	if c == nil {
 		return 0
 	}
+	async := debug.asynctimerchan.Load() != 0
+	if c.timer != nil && async {
+		c.timer.maybeRunChan()
+	}
+	if c.timer != nil && !async {
+		// timer channels have a buffered implementation
+		// but present to users as unbuffered, so that we can
+		// undo sends without users noticing.
+		return 0
+	}
 	return int(c.qcount)
+}
+
+func chancap(c *hchan) int {
+	if c == nil {
+		return 0
+	}
+	if c.timer != nil {
+		async := debug.asynctimerchan.Load() != 0
+		if async {
+			return int(c.dataqsiz)
+		}
+		// timer channels have a buffered implementation
+		// but present to users as unbuffered, so that we can
+		// undo sends without users noticing.
+		return 0
+	}
+	return int(c.dataqsiz)
+}
+
+//go:linkname reflect_chanlen reflect.chanlen
+func reflect_chanlen(c *hchan) int {
+	return chanlen(c)
 }
 
 //go:linkname reflectlite_chanlen internal/reflectlite.chanlen
 func reflectlite_chanlen(c *hchan) int {
-	if c == nil {
-		return 0
-	}
-	return int(c.qcount)
+	return chanlen(c)
 }
 
 //go:linkname reflect_chancap reflect.chancap
 func reflect_chancap(c *hchan) int {
-	if c == nil {
-		return 0
-	}
-	return int(c.dataqsiz)
+	return chancap(c)
 }
 
 //go:linkname reflect_chanclose reflect.chanclose

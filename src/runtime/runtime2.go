@@ -8,7 +8,7 @@ import (
 	"internal/abi"
 	"internal/chacha8rand"
 	"internal/goarch"
-	"runtime/internal/atomic"
+	"internal/runtime/atomic"
 	"runtime/internal/sys"
 	"unsafe"
 )
@@ -457,19 +457,20 @@ type g struct {
 	// stackguard1 is the stack pointer compared in the //go:systemstack stack growth prologue.
 	// It is stack.lo+StackGuard on g0 and gsignal stacks.
 	// It is ~0 on other goroutine stacks, to trigger a call to morestackc (and crash).
-	stack stack // 当前g使用的栈空间, 有lo和hi两个成员。offset known to runtime/cgo
+	stack       stack // 当前g使用的栈空间, 有lo和hi两个成员。offset known to runtime/cgo
 	// 下面两个成员用于栈溢出检查，实现栈的自动伸缩，抢占调度也会用到stackguard0
 	stackguard0 uintptr // 检查栈空间是否足够的值, 低于这个值会扩张栈, 0是go代码使用的。 offset known to liblink
 	stackguard1 uintptr // 检查栈空间是否足够的值, 低于这个值会扩张栈, 1是原生代码使用的。offset known to liblink
 	// stackguard0 和 stackguard1 均是一个栈指针，用于扩容场景，前者用于 Go stack ，后者用于C stack。
 	// 如果 stackguard0 字段被设置成 StackPreempt 意味着当前 Goroutine 发出了抢占请求。
-	_panic *_panic // 当前Goroutine 中的panic. innermost panic - offset known to liblink
-	_defer *_defer // 当前Goroutine 中的defer. innermost defer
+	_panic    *_panic // 当前Goroutine 中的panic. innermost panic - offset known to liblink
+	_defer    *_defer // 当前Goroutine 中的defer. innermost defer
 	// 此goroutine正在被哪个工作线程执行
 	m         *m      // 当前 Goroutine 绑定的M. current m; offset known to arm liblink
 	sched     gobuf   //  g的调度数据, 当g中断时会保存当前的pc和rsp等值到这里, 恢复运行时会使用这里的值
 	syscallsp uintptr // 如果G 的状态为 Gsyscall ,那么值为 sched.sp 主要用于GC 期间. if status==Gsyscall, syscallsp = sched.sp to use during gc
 	syscallpc uintptr // 如果G的状态为 GSyscall ，那么值为 sched.pc 同上也是用于GC 期间，由此可见这两个字段是一起使用的.if status==Gsyscall, syscallpc = sched.pc to use during gc
+	syscallbp uintptr // if status==Gsyscall, syscallbp = sched.bp to use in fpTraceback
 	stktopsp  uintptr // 在堆栈顶部的预期sp，在追踪中检查 .expected sp at top of stack, to check in traceback
 	// param is a generic pointer parameter field used to pass
 	// values in particular contexts where other storage for the
@@ -543,13 +544,14 @@ type g struct {
 	cgoCtxt       []uintptr      // cgo traceback context
 	labels        unsafe.Pointer // profiler labels
 	timer         *timer         // cached timer for time.Sleep
+	sleepWhen     int64          // when to sleep until
 	selectDone    atomic.Uint32  // are we participating in a select and did someone win the race?
-
-	coroarg *coro // argument during coroutine transfers
 
 	// goroutineProfiled indicates the status of this goroutine's stack for the
 	// current in-progress goroutine profile
 	goroutineProfiled goroutineProfileStateHolder
+
+	coroarg *coro // argument during coroutine transfers
 
 	// Per-G tracer state.
 	trace gTraceState
@@ -647,8 +649,8 @@ type m struct {
 	// there's no stack to put them on. That is their sole purpose.
 	waitunlockf          func(*g, unsafe.Pointer) bool // 等待解锁函数
 	waitlock             unsafe.Pointer // 等待锁
-	waitTraceBlockReason traceBlockReason
 	waitTraceSkip        int
+	waitTraceBlockReason traceBlockReason
 
 	syscalltick uint32
 	freelink    *m //  m释放列表，链接到 sched.freem 字段. on sched.freem
@@ -656,11 +658,11 @@ type m struct {
 
 	// these are here because they are too large to be on the stack
 	// of low-level NOSPLIT functions.
-	libcall   libcall
-	libcallpc uintptr // for cpu profiler
-	libcallsp uintptr
-	libcallg  guintptr
-	syscall   libcall // stores syscall parameters on windows
+	libcall    libcall
+	libcallpc  uintptr // for cpu profiler
+	libcallsp  uintptr
+	libcallg   guintptr
+	winsyscall winlibcall // stores syscall parameters on windows
 
 	vdsoSP uintptr // SP for traceback while in VDSO call (0 if not in call)
 	vdsoPC uintptr // PC for traceback while in VDSO call
@@ -764,23 +766,6 @@ type p struct {
 
 	palloc persistentAlloc // per-P to avoid mutex
 
-	// The when field of the first entry on the timer heap.
-	// This is 0 if the timer heap is empty.
-	// 计时器堆上第一个条目的when字段。
-	// 这是使用原子函数更新的。
-	// 如果计时器堆为空，则为0。
-	timer0When atomic.Int64
-
-	// The earliest known nextwhen field of a timer with
-	// timerModifiedEarlier status. Because the timer may have been
-	// modified again, there need not be any timer with this value.
-	// This is 0 if there are no timerModifiedEarlier timers.
-	// 具有timerModifiedEarlier状态的计时器的已知最早的nextwhen字段。
-	// 由于计时器可能已再次修改，因此不需要任何具有此值的计时器。
-	// 这是用原子函数更新的。
-	// 如果没有 timerModifiedEarlier 计时器，这个值就是 0。
-	timerModifiedEarliest atomic.Int64
-
 	// Per-P GC state
 	gcAssistTime         int64 // Nanoseconds in assistAlloc
 	gcFractionalMarkTime int64 // Nanoseconds in fractional mark worker (atomic)
@@ -823,32 +808,8 @@ type p struct {
 	// statsSeq是一个计数器，表示这个P目前是否正在写任何统计信息。没有的时候它的值是偶数，有的时候是奇数。
 	statsSeq atomic.Uint32
 
-	// Lock for timers. We normally access the timers while running
-	// on this P, but the scheduler can also do it from a different P.
-	// 计时器的锁。我们通常在这个P上运行时访问定时器，但调度员也可以从不同的P上进行。
-	timersLock mutex
-
-	// Actions to take at some time. This is used to implement the
-	// standard library's time package.
-	// Must hold timersLock to access.
-	// 在某个时间采取的行动。这是用来实现标准库的时间包。
-	// 必须持有timersLock才能访问。
-	timers []*timer
-
-	// Number of timers in P's heap.
-	// P的堆中的定时器数量。
-	// 使用原子指令进行修改。
-	numTimers atomic.Uint32
-
-	// Number of timerDeleted timers in P's heap.
-	//
-	// P的堆中TimerDeleted定时器的数量。
-	// 使用原子指令进行修改。
-	deletedTimers atomic.Uint32
-
-	// Race context used while executing timer functions.
-	// 执行计时器函数时使用的竞争上下文。
-	timerRaceCtx uintptr
+	// Timer heap.
+	timers timers
 
 	// maxStackScanDelta accumulates the amount of stack space held by
 	// live goroutines (i.e. those eligible for stack scanning).
@@ -873,6 +834,9 @@ type p struct {
 	// scheduler ASAP (regardless of what G is running on it).
 	// preempt被设置为表示这个P应该尽快进入调度器（不管它上面运行的是什么G）。
 	preempt bool
+
+	// gcStopTime is the nanotime timestamp that this P last entered _Pgcstop.
+	gcStopTime int64
 
 	// pageTraceBuf is a buffer for writing out page allocation/free/scavenge traces.
 	//
@@ -1281,6 +1245,29 @@ func (w waitReason) isMutexWait() bool {
 		w == waitReasonSyncRWMutexLock
 }
 
+func (w waitReason) isWaitingForGC() bool {
+	return isWaitingForGC[w]
+}
+
+// isWaitingForGC indicates that a goroutine is only entering _Gwaiting and
+// setting a waitReason because it needs to be able to let the GC take ownership
+// of its stack. The G is always actually executing on the system stack, in
+// these cases.
+//
+// TODO(mknyszek): Consider replacing this with a new dedicated G status.
+var isWaitingForGC = [len(waitReasonStrings)]bool{
+	waitReasonStoppingTheWorld:      true,
+	waitReasonGCMarkTermination:     true,
+	waitReasonGarbageCollection:     true,
+	waitReasonGarbageCollectionScan: true,
+	waitReasonTraceGoroutineStatus:  true,
+	waitReasonTraceProcStatus:       true,
+	waitReasonPageTraceFlush:        true,
+	waitReasonGCAssistMarking:       true,
+	waitReasonGCWorkerActive:        true,
+	waitReasonFlushProcCaches:       true,
+}
+
 var (
 	allm       *m    // 所有的m构成的一个链表，包括上面的m0
 	gomaxprocs int32 // p 的最大数量，默认等于ncpu，可以通过GOMAXPROCS修改
@@ -1288,13 +1275,17 @@ var (
 	forcegc    forcegcstate
 	sched      schedt // 调度器的结构体，保存了调度器的各种信息
 	newprocs   int32
+)
 
+var (
 	// allpLock protects P-less reads and size changes of allp, idlepMask,
 	// and timerpMask, and all writes to allp.
 	allpLock mutex // 系统cpu核的数量，程序启动时由runtime初始化
+
 	// len(allp) == gomaxprocs; may change at safe points, otherwise
 	// immutable.
 	allp []*p // 保存所有的p， len(allp) == gomaxprocs
+
 	// Bitmask of Ps in _Pidle list, one bit per P. Reads and writes must
 	// be atomic. Length may change at safe points.
 	//
@@ -1306,10 +1297,37 @@ var (
 	//
 	// N.B., procresize takes ownership of all Ps in stopTheWorldWithSema.
 	idlepMask pMask
+
 	// Bitmask of Ps that may have a timer, one bit per P. Reads and writes
 	// must be atomic. Length may change at safe points.
+	//
+	// Ideally, the timer mask would be kept immediately consistent on any timer
+	// operations. Unfortunately, updating a shared global data structure in the
+	// timer hot path adds too much overhead in applications frequently switching
+	// between no timers and some timers.
+	//
+	// As a compromise, the timer mask is updated only on pidleget / pidleput. A
+	// running P (returned by pidleget) may add a timer at any time, so its mask
+	// must be set. An idle P (passed to pidleput) cannot add new timers while
+	// idle, so if it has no timers at that time, its mask may be cleared.
+	//
+	// Thus, we get the following effects on timer-stealing in findrunnable:
+	//
+	//   - Idle Ps with no timers when they go idle are never checked in findrunnable
+	//     (for work- or timer-stealing; this is the ideal case).
+	//   - Running Ps must always be checked.
+	//   - Idle Ps whose timers are stolen must continue to be checked until they run
+	//     again, even after timer expiration.
+	//
+	// When the P starts running again, the mask should be set, as a timer may be
+	// added at any time.
+	//
+	// TODO(prattmic): Additional targeted updates may improve the above cases.
+	// e.g., updating the mask when stealing a timer.
 	timerpMask pMask
+)
 
+var (
 	// Pool of GC parked background workers. Entries are type
 	// *gcBgMarkWorkerNode.
 	gcBgMarkWorkerPool lfstack
@@ -1337,3 +1355,17 @@ var (
 
 // Must agree with internal/buildcfg.FramePointerEnabled.
 const framepointer_enabled = GOARCH == "amd64" || GOARCH == "arm64"
+
+// getcallerfp returns the frame pointer of the caller of the caller
+// of this function.
+//
+//go:nosplit
+//go:noinline
+func getcallerfp() uintptr {
+	fp := getfp() // This frame's FP.
+	if fp != 0 {
+		fp = *(*uintptr)(unsafe.Pointer(fp)) // The caller's FP.
+		fp = *(*uintptr)(unsafe.Pointer(fp)) // The caller's caller's FP.
+	}
+	return fp
+}

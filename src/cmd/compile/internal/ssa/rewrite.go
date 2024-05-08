@@ -40,6 +40,14 @@ func applyRewrite(f *Func, rb blockRewriter, rv valueRewriter, deadcode deadValu
 	if debug > 1 {
 		fmt.Printf("%s: rewriting for %s\n", f.pass.name, f.Name)
 	}
+	// if the number of rewrite iterations reaches itersLimit we will
+	// at that point turn on cycle detection. Instead of a fixed limit,
+	// size the limit according to func size to allow for cases such
+	// as the one in issue #66773.
+	itersLimit := f.NumBlocks()
+	if itersLimit < 20 {
+		itersLimit = 20
+	}
 	var iters int
 	var states map[string]bool
 	for {
@@ -154,7 +162,7 @@ func applyRewrite(f *Func, rb blockRewriter, rv valueRewriter, deadcode deadValu
 			break
 		}
 		iters++
-		if (iters > 1000 || debug >= 2) && change {
+		if (iters > itersLimit || debug >= 2) && change {
 			// We've done a suspiciously large number of rewrites (or we're in debug mode).
 			// As of Sep 2021, 90% of rewrites complete in 4 iterations or fewer
 			// and the maximum value encountered during make.bash is 12.
@@ -1294,8 +1302,10 @@ func zeroUpper32Bits(x *Value, depth int) bool {
 		OpARM64MULW, OpARM64MNEGW, OpARM64UDIVW, OpARM64DIVW, OpARM64UMODW,
 		OpARM64MADDW, OpARM64MSUBW, OpARM64RORW, OpARM64RORWconst:
 		return true
-	case OpArg:
-		return x.Type.Size() == 4
+	case OpArg: // note: but not ArgIntReg
+		// amd64 always loads args from the stack unsigned.
+		// most other architectures load them sign/zero extended based on the type.
+		return x.Type.Size() == 4 && (x.Type.IsUnsigned() || x.Block.Func.Config.arch == "amd64")
 	case OpPhi, OpSelect0, OpSelect1:
 		// Phis can use each-other as an arguments, instead of tracking visited values,
 		// just limit recursion depth.
@@ -1318,8 +1328,8 @@ func zeroUpper48Bits(x *Value, depth int) bool {
 	switch x.Op {
 	case OpAMD64MOVWQZX, OpAMD64MOVWload, OpAMD64MOVWloadidx1, OpAMD64MOVWloadidx2:
 		return true
-	case OpArg:
-		return x.Type.Size() == 2
+	case OpArg: // note: but not ArgIntReg
+		return x.Type.Size() == 2 && (x.Type.IsUnsigned() || x.Block.Func.Config.arch == "amd64")
 	case OpPhi, OpSelect0, OpSelect1:
 		// Phis can use each-other as an arguments, instead of tracking visited values,
 		// just limit recursion depth.
@@ -1342,8 +1352,8 @@ func zeroUpper56Bits(x *Value, depth int) bool {
 	switch x.Op {
 	case OpAMD64MOVBQZX, OpAMD64MOVBload, OpAMD64MOVBloadidx1:
 		return true
-	case OpArg:
-		return x.Type.Size() == 1
+	case OpArg: // note: but not ArgIntReg
+		return x.Type.Size() == 1 && (x.Type.IsUnsigned() || x.Block.Func.Config.arch == "amd64")
 	case OpPhi, OpSelect0, OpSelect1:
 		// Phis can use each-other as an arguments, instead of tracking visited values,
 		// just limit recursion depth.
@@ -1579,7 +1589,7 @@ func mergePPC64AndSrwi(m, s int64) int64 {
 	return encodePPC64RotateMask((32-s)&31, mask, 32)
 }
 
-// Test if a shift right feeding into a CLRLSLDI can be merged into RLWINM.
+// Test if a word shift right feeding into a CLRLSLDI can be merged into RLWINM.
 // Return the encoded RLWINM constant, or 0 if they cannot be merged.
 func mergePPC64ClrlsldiSrw(sld, srw int64) int64 {
 	mask_1 := uint64(0xFFFFFFFF >> uint(srw))
@@ -1597,6 +1607,31 @@ func mergePPC64ClrlsldiSrw(sld, srw int64) int64 {
 		return 0
 	}
 	return encodePPC64RotateMask(int64(r_3), int64(mask_3), 32)
+}
+
+// Test if a doubleword shift right feeding into a CLRLSLDI can be merged into RLWINM.
+// Return the encoded RLWINM constant, or 0 if they cannot be merged.
+func mergePPC64ClrlsldiSrd(sld, srd int64) int64 {
+	mask_1 := uint64(0xFFFFFFFFFFFFFFFF) >> uint(srd)
+	// for CLRLSLDI, it's more convenient to think of it as a mask left bits then rotate left.
+	mask_2 := uint64(0xFFFFFFFFFFFFFFFF) >> uint(GetPPC64Shiftmb(int64(sld)))
+
+	// Rewrite mask to apply after the final left shift.
+	mask_3 := (mask_1 & mask_2) << uint(GetPPC64Shiftsh(sld))
+
+	r_1 := 64 - srd
+	r_2 := GetPPC64Shiftsh(sld)
+	r_3 := (r_1 + r_2) & 63 // This can wrap.
+
+	if uint64(uint32(mask_3)) != mask_3 || mask_3 == 0 {
+		return 0
+	}
+	// This combine only works when selecting and shifting the lower 32 bits.
+	v1 := bits.RotateLeft64(0xFFFFFFFF00000000, int(r_3))
+	if v1&mask_3 != 0 {
+		return 0
+	}
+	return encodePPC64RotateMask(int64(r_3-32), int64(mask_3), 32)
 }
 
 // Test if a RLWINM feeding into a CLRLSLDI can be merged into RLWINM.  Return

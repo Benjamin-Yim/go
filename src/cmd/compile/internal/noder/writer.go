@@ -569,7 +569,10 @@ func (pw *pkgWriter) typIdx(typ types2.Type, dict *writerDict) typeInfo {
 
 	case *types2.Interface:
 		// Handle "any" as reference to its TypeName.
-		if typ == anyTypeName.Type() {
+		// The underlying "any" interface is canonical, so this logic handles both
+		// GODEBUG=gotypesalias=1 (when any is represented as a types2.Alias), and
+		// gotypesalias=0.
+		if types2.Unalias(typ) == types2.Unalias(anyTypeName.Type()) {
 			w.Code(pkgbits.TypeNamed)
 			w.obj(anyTypeName, nil)
 			break
@@ -831,7 +834,11 @@ func (w *writer) doObj(wext *writer, obj types2.Object) pkgbits.CodeObj {
 	case *types2.TypeName:
 		if obj.IsAlias() {
 			w.pos(obj)
-			w.typ(obj.Type())
+			t := obj.Type()
+			if alias, ok := t.(*types2.Alias); ok { // materialized alias
+				t = alias.Rhs()
+			}
+			w.typ(t)
 			return pkgbits.ObjAlias
 		}
 
@@ -1217,10 +1224,17 @@ func (w *writer) stmt(stmt syntax.Stmt) {
 func (w *writer) stmts(stmts []syntax.Stmt) {
 	dead := false
 	w.Sync(pkgbits.SyncStmts)
-	for _, stmt := range stmts {
-		if dead {
-			// Any statements after a terminating statement are safe to
-			// omit, at least until the next labeled statement.
+	var lastLabel = -1
+	for i, stmt := range stmts {
+		if _, ok := stmt.(*syntax.LabeledStmt); ok {
+			lastLabel = i
+		}
+	}
+	for i, stmt := range stmts {
+		if dead && i > lastLabel {
+			// Any statements after a terminating and last label statement are safe to omit.
+			// Otherwise, code after label statement may refer to dead stmts between terminating
+			// and label statement, see issue #65593.
 			if _, ok := stmt.(*syntax.LabeledStmt); !ok {
 				continue
 			}
@@ -2297,7 +2311,6 @@ func (w *writer) compLit(lit *syntax.CompositeLit) {
 				elem = kv.Value
 			}
 		}
-		w.pos(elem)
 		w.implicitConvExpr(elemType, elem)
 	}
 }

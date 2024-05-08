@@ -16,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"internal/cfg"
+	"internal/goarch"
 	"internal/platform"
 	"os"
 	"os/exec"
@@ -369,6 +370,15 @@ func MustInternalLink(t testing.TB, withCgo bool) {
 	}
 }
 
+// MustInternalLinkPIE checks whether the current system can link PIE binary using
+// internal linking.
+// If not, MustInternalLinkPIE calls t.Skip with an explanation.
+func MustInternalLinkPIE(t testing.TB) {
+	if !platform.InternalLinkPIESupported(runtime.GOOS, runtime.GOARCH) {
+		t.Skipf("skipping test: internal linking for buildmode=pie on %s/%s is not supported", runtime.GOOS, runtime.GOARCH)
+	}
+}
+
 // MustHaveBuildMode reports whether the current system can build programs in
 // the given build mode.
 // If not, MustHaveBuildMode calls t.Skip with an explanation.
@@ -501,4 +511,14 @@ func WriteImportcfg(t testing.TB, dstPath string, packageFiles map[string]string
 // not supported by the current platform or execution environment.
 func SyscallIsNotSupported(err error) bool {
 	return syscallIsNotSupported(err)
+}
+
+// ParallelOn64Bit calls t.Parallel() unless there is a case that cannot be parallel.
+// This function should be used when it is necessary to avoid t.Parallel on
+// 32-bit machines, typically because the test uses lots of memory.
+func ParallelOn64Bit(t *testing.T) {
+	if goarch.PtrSize == 4 {
+		return
+	}
+	t.Parallel()
 }
