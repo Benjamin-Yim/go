@@ -169,7 +169,7 @@ func main() {
 	// 标记主函数已调用, 设置mainStarted = true。Allow newproc to start new Ms.
 	mainStarted = true
 	// 启动一个新的M执行sysmon函数, 这个函数会监控全局的状态并对运行时间过长的G进行抢占
-	if haveSysmon {// wasm上还没有线程，所以没有sysmon. no threads on wasm yet, so no sysmon.
+	if haveSysmon { // wasm上还没有线程，所以没有sysmon. no threads on wasm yet, so no sysmon.
 		//现在执行的是main goroutine，所以使用的是main goroutine的栈，需要切换到g0栈去执行newm()
 		systemstack(func() {
 			// 创建监控线程，该线程独立于调度器，不需要跟p关联即可运行
@@ -353,6 +353,7 @@ func forcegchelper() {
 //
 // Gosched 会让出当前的 P，并允许其他 Goroutine 运行。
 // 它不会推迟当前的 Goroutine，因此执行会被自动恢复
+//
 //go:nosplit
 func Gosched() {
 	checkTimeouts()
@@ -983,7 +984,7 @@ const (
 // 将 gp 标记为 ready 来运行
 func ready(gp *g, traceskip int, next bool) {
 	if trace.enabled {
-		traceGoUnpark(gp, traceskip)
+		//traceGoUnpark(gp, traceskip)
 	}
 
 	// 获取当前 g 的状态
@@ -1638,7 +1639,7 @@ func stopTheWorldWithSema(reason stwReason) worldStop {
 // stattTheWorldWithSema returns now.
 func startTheWorldWithSema(now int64, w worldStop) int64 {
 	if debugSource {
-		emitTraceEvent = true
+		//emitTraceEvent = true
 	}
 	assertWorldStopped()
 
@@ -2996,7 +2997,7 @@ func startm(pp *p, spinning, lockheld bool) {
 	if !lockheld {
 		lock(&sched.lock) // 禁止M被其他 p 抢占
 	}
-	if pp == nil {// 是空的
+	if pp == nil { // 是空的
 		if spinning {
 			// TODO(prattmic): All remaining calls to this function
 			// with _p_ == nil could be cleaned up to find a P
@@ -5096,8 +5097,8 @@ func newproc(fn *funcval) {
 	if debugSource {
 		println("新建一个协程，name:", FuncForPC(fn.fn).Name())
 	}
-	gp := getg() // 获取当前待运行的G
-	pc := getcallerpc() // 获取调用端的地址(返回地址)PC. pop ax
+	gp := getg()         // 获取当前待运行的G
+	pc := getcallerpc()  // 获取调用端的地址(返回地址)PC. pop ax
 	systemstack(func() { // 切换当前的g到g0,并且使用g0的栈空间, 然后调用传入的函数
 		newg := newproc1(fn, gp, pc, false, waitReasonZero) // g0 开始调度
 
@@ -5451,6 +5452,7 @@ func dolockOSThread() {
 //
 // 如果模板线程尚未运行，则startTemplateThread将启动它
 // 调用线程本身必须处于已知良好状态。
+//
 //go:nosplit
 func LockOSThread() {
 	if atomic.Load(&newmHandoff.haveTemplateThread) == 0 && GOOS != "plan9" {
@@ -5511,6 +5513,7 @@ func dounlockOSThread() {
 // hence the thread) exits.
 //
 // Unlock 的部分非常简单，减少计数，再实际 dounlock：
+//
 //go:nosplit
 func UnlockOSThread() {
 	gp := getg()
@@ -6434,9 +6437,9 @@ func sysmon() {
 // 系统门滴答
 type sysmontick struct {
 	schedtick   uint32 //处理器的调度次数
-	syscalltick uint32  //系统调用的次数
+	syscalltick uint32 //系统调用的次数
 	schedwhen   int64  //处理器上次调度时间
-	syscallwhen int64   //系统调用的时间
+	syscallwhen int64  //系统调用的时间
 }
 
 // forcePreemptNS is the time slice given to a G before it is
